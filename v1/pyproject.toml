@@ -1,0 +1,52 @@
+[project]
+name = "personal-agent-v1"
+version = "0.1.0"
+description = "Personal AI agent over iMessage — local-first on Mac. v1 MVP."
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "Proprietary" }
+
+dependencies = [
+    # Claude Agent SDK + MCP infrastructure
+    "claude-agent-sdk>=0.1.0",
+    "mcp>=1.0.0",
+    "anthropic>=0.40.0",
+
+    # Google APIs (Gmail + Calendar)
+    "google-api-python-client>=2.150.0",
+    "google-auth>=2.35.0",
+    "google-auth-oauthlib>=1.2.0",
+    "google-auth-httplib2>=0.2.0",
+
+    # Todoist + general HTTP
+    "requests>=2.32.0",
+
+    # Config + utilities
+    "pyyaml>=6.0.2",
+    "python-dotenv>=1.0.1",
+    "pydantic>=2.10.0",
+    "pytz>=2024.2",
+
+    # macOS AppleScript bridge for iMessage
+    "py-applescript>=1.0.3 ; sys_platform == 'darwin'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.7.0",
+    "mypy>=1.13.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "SIM", "RUF"]
+ignore = ["E501"]  # line length is enforced by formatter
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
