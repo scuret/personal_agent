@@ -45,17 +45,27 @@ from claude_agent_sdk import (  # noqa: E402
 
 from memory.store import MemoryStore  # noqa: E402
 from mcp_servers.memory_server import create_memory_mcp_server  # noqa: E402
+from mcp_servers.todoist_server import create_todoist_mcp_server  # noqa: E402
 from system_prompt import build_system_prompt  # noqa: E402
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
-# The memory tools, namespaced as the SDK expects:
-# `mcp__<server-name>__<tool-name>`. These have to be in `allowed_tools`
-# for the agent to be permitted to call them.
+# The MCP tools the agent is permitted to call. Each name follows the SDK
+# convention `mcp__<server-name>__<tool-name>`. Anything not on this list
+# is blocked even if the MCP server exposes it.
 MEMORY_TOOLS = [
     "mcp__memory__memory_log_fact",
     "mcp__memory__memory_recall_facts",
     "mcp__memory__memory_search_conversations",
+]
+
+TODOIST_TOOLS = [
+    "mcp__todoist__todoist_list_tasks",
+    "mcp__todoist__todoist_create_task",
+    "mcp__todoist__todoist_update_task",
+    "mcp__todoist__todoist_complete_task",
+    "mcp__todoist__todoist_list_projects",
+    "mcp__todoist__todoist_list_labels",
 ]
 
 
@@ -65,13 +75,16 @@ def _build_options(store: MemoryStore) -> ClaudeAgentOptions:
         system_prompt=build_system_prompt(store),
         # Pin the model so behavior is reproducible. Override via env var.
         model=os.environ.get("CLAUDE_MODEL", DEFAULT_MODEL),
-        # In-process MCP server — no subprocess overhead. The factory
-        # closes over `store` so the tools share the same SQLite handle
-        # the agent_host uses for archive/audit writes.
-        mcp_servers={"memory": create_memory_mcp_server(store)},
-        # Allowlist what tools the agent may call. Only memory tools so far.
-        # Step 4 adds Gmail/Todoist/Calendar to this list.
-        allowed_tools=MEMORY_TOOLS,
+        # In-process MCP servers — no subprocess overhead. The memory
+        # factory closes over `store` so its tools share the same SQLite
+        # handle the agent_host uses for archive/audit writes.
+        mcp_servers={
+            "memory": create_memory_mcp_server(store),
+            "todoist": create_todoist_mcp_server(),
+        },
+        # Allowlist what tools the agent may call. Anything not listed here
+        # is blocked. Gmail + Calendar land in the next sub-commits of step 4.
+        allowed_tools=MEMORY_TOOLS + TODOIST_TOOLS,
     )
 
 
