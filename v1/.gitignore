@@ -6,6 +6,8 @@ config/credentials.json
 data/*.pickle
 data/*.sqlite
 data/*.sqlite-journal
+data/*.sqlite-shm
+data/*.sqlite-wal
 data/*.db
 data/*.log
 

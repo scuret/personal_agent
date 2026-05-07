@@ -30,7 +30,7 @@ Three hard rules, enforced in three places (system prompt + tool surface + SDK p
 
 1. **Never auto-send email.** No `send_email` tool exists. Drafts go to Gmail Drafts. The user is the only one who hits send.
 2. **Never modify shared external state without confirmation.** Reading is free; writing requires explicit user direction in the conversation.
-3. **All Claude API traffic is logged locally** (`data/audit.sqlite`) so you can audit what the agent sent to Anthropic.
+3. **All Claude API traffic is logged locally** (`data/memory.sqlite`, table `api_events`) so you can audit what the agent sent to Anthropic.
 
 ## Architecture
 
@@ -80,10 +80,12 @@ v1/
 │   ├── todoist_server.py  # CRUD, daily/overdue filters
 │   ├── calendar_server.py # list, search, availability (read-only)
 │   └── memory_server.py   # archive + fact extraction + recall
+├── memory/
+│   └── store.py           # SQLite layer: archive + audit + facts
 ├── config/
 │   ├── personality.md     # editable system-prompt source
 │   └── triggers.yaml      # important sender list + keywords
-├── data/                  # gitignored — sqlite dbs, OAuth token cache
+├── data/                  # gitignored — memory.sqlite, OAuth token cache
 ├── pyproject.toml
 ├── .env.example
 └── README.md
@@ -154,9 +156,9 @@ Step 1 of 5 (skeleton) — **in progress**. See the build plan in conversation h
 
 | Step | Status |
 |---|---|
-| 1. Scaffold v1/ skeleton + README | in progress |
-| 2. Stand up agent host with personality (no integrations yet) | not started |
-| 3. Memory MCP server (audit log + conversation archive) | not started |
+| 1. Scaffold v1/ skeleton + README | done |
+| 2. Stand up agent host with personality (no integrations yet) | done |
+| 3. Memory MCP server (audit log + conversation archive + facts) | done |
 | 4. Gmail / Todoist / Calendar MCP servers | not started |
 | 5. iMessage relay + scheduler + LaunchAgents | not started |
 
@@ -166,4 +168,10 @@ The agent's tone is defined in `config/personality.md` and loaded at startup. Ed
 
 ## Privacy
 
-The agent talks to Anthropic's API. All traffic (full prompts, full responses, tool calls) is logged to `data/audit.sqlite` so you can audit what's been sent. Anthropic's commercial privacy terms apply by default — no training on API data, 30-day retention.
+The agent talks to Anthropic's API. All traffic (user inputs, assistant text, tool calls, tool results, end-of-turn metadata) is logged to `data/memory.sqlite` in the `api_events` table so you can audit what's been sent. Anthropic's commercial privacy terms apply by default — no training on API data, 30-day retention.
+
+To inspect:
+
+```bash
+sqlite3 data/memory.sqlite "SELECT timestamp, kind, substr(payload, 1, 80) FROM api_events ORDER BY id DESC LIMIT 20;"
+```
