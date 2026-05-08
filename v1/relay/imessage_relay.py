@@ -59,6 +59,20 @@ LAST_SEEN_KEY = "imessage_last_seen_rowid"
 CONVERSATION_SOURCE = "imessage"
 CONVERSATION_GAP_HOURS = 4.0
 
+# Mode dispatch. "contact" filters on a single SENDER handle (incoming from
+# someone else). "self" listens to your own messages in note-to-self chats
+# (is_from_me=1) so you can text your own agent.
+MODE_CONTACT = "contact"
+MODE_SELF = "self"
+
+# Outgoing-message marker. Every message the relay sends via AppleScript
+# is prefixed with U+200B (zero-width space). On read, the relay skips
+# messages starting with this character so its own replies don't trigger
+# another agent turn. Invisible in iMessage UI; would only matter if you
+# copy-pasted a reply and re-sent it (the relay would then skip your
+# resend, which is a fine corner-case behavior).
+OUTGOING_MARKER = "​"
+
 # chat.db stores `date` as nanoseconds since 2001-01-01 UTC. Constant for
 # converting to/from a real datetime. Used only when we need timestamps.
 APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=timezone.utc)
@@ -68,18 +82,48 @@ def _apple_ns_to_dt(ns: int) -> datetime:
     return APPLE_EPOCH + timedelta(microseconds=ns / 1000)
 
 
+def _self_handles() -> list[str]:
+    """Resolve the list of "self handles" used in self-mode.
+
+    Includes TARGET_PHONE_NUMBER (always, since in self-mode that's your
+    own primary number) and any extras from SELF_HANDLES (comma-sep).
+    Empty values are dropped.
+    """
+    handles = [os.environ.get("TARGET_PHONE_NUMBER", "").strip()]
+    extra = os.environ.get("SELF_HANDLES", "").strip()
+    if extra:
+        handles.extend(h.strip() for h in extra.split(","))
+    return [h for h in handles if h]
+
+
 # ─── Reading from chat.db ────────────────────────────────────────────────────
 
 
 class ChatReader:
-    """Pulls new incoming messages from a single 1:1 conversation.
+    """Pulls new agent-input messages from chat.db.
 
-    Group chats are out of scope for v1. We filter strictly to messages
-    where the sender's `handle.id` matches `target_handle` and `is_from_me=0`.
+    Two modes:
+
+      contact mode (current default)
+          Listen for incoming messages from a single sender. Filter:
+          h.id = target_handle, is_from_me = 0. Group chats out of scope.
+
+      self mode
+          Listen for messages in note-to-self chats so you can text your
+          own agent. We do NOT filter on is_from_me because the same
+          Apple ID can produce both is_from_me=1 (typed on this Mac) and
+          is_from_me=0 (typed on iPhone — Mac sees it as inbound from
+          another device on the account). Loop prevention is handled by
+          OUTGOING_MARKER (zero-width space) on every reply we send;
+          we drop any incoming message whose text starts with it.
     """
 
-    def __init__(self, target_handle: str) -> None:
+    def __init__(self, mode: str, target_handle: str, self_handles: list[str]) -> None:
+        if mode not in (MODE_CONTACT, MODE_SELF):
+            raise ValueError(f"unknown IMESSAGE_MODE: {mode!r}")
+        self.mode = mode
         self.target_handle = target_handle
+        self.self_handles = self_handles
 
     def _connect(self) -> sqlite3.Connection:
         if not CHAT_DB.exists():
@@ -102,11 +146,24 @@ class ChatReader:
         except Exception as e:  # noqa: BLE001
             return False, f"{type(e).__name__}: {e}"
 
-    def fetch_new_since(self, last_rowid: int, limit: int = 50) -> list[dict[str, Any]]:
-        """Return incoming messages with ROWID > last_rowid, oldest first."""
+    def fetch_new_since(self, last_rowid: int, limit: int = 50) -> tuple[list[dict[str, Any]], int]:
+        """Return (processable_messages, max_rowid_seen).
+
+        The second element is the highest ROWID encountered in the query
+        window, even for rows we filter out (empty pseudo-messages, our
+        own outgoing replies). The daemon uses it to advance `last_seen`
+        past skipped rows so they don't get re-fetched forever.
+        """
+        if self.mode == MODE_CONTACT:
+            return self._fetch_contact(last_rowid, limit)
+        return self._fetch_self(last_rowid, limit)
+
+    def _fetch_contact(
+        self, last_rowid: int, limit: int
+    ) -> tuple[list[dict[str, Any]], int]:
         with self._connect() as conn:
             rows = conn.execute(
-                """SELECT m.ROWID AS rowid, m.text, m.date, m.is_from_me, h.id AS sender
+                """SELECT m.ROWID AS rowid, m.text, m.date, h.id AS sender
                      FROM message m
                 LEFT JOIN handle h ON m.handle_id = h.ROWID
                     WHERE m.is_from_me = 0
@@ -116,17 +173,53 @@ class ChatReader:
                     LIMIT ?""",
                 (self.target_handle, last_rowid, limit),
             ).fetchall()
-        return [
-            {
-                "rowid": int(r["rowid"]),
-                "text": r["text"] or "",
-                "sent_at": _apple_ns_to_dt(int(r["date"])).isoformat()
-                if r["date"]
-                else None,
-                "sender": r["sender"],
-            }
-            for r in rows
-        ]
+        max_rowid = max((int(r["rowid"]) for r in rows), default=last_rowid)
+        return [self._row_to_dict(r) for r in rows], max_rowid
+
+    def _fetch_self(
+        self, last_rowid: int, limit: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        if not self.self_handles:
+            return [], last_rowid
+        placeholders = ",".join("?" * len(self.self_handles))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""SELECT m.ROWID AS rowid, m.text, m.date, c.chat_identifier AS sender
+                     FROM message m
+                     JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+                     JOIN chat c ON c.ROWID = cmj.chat_id
+                    WHERE c.chat_identifier IN ({placeholders})
+                      AND m.ROWID > ?
+                 ORDER BY m.ROWID ASC
+                    LIMIT ?""",
+                (*self.self_handles, last_rowid, limit),
+            ).fetchall()
+        # Skip empty rows (Apple inserts blank message records for tap-back
+        # reactions, read receipts, etc.) and skip our own replies (tagged
+        # with OUTGOING_MARKER). Everything else is treated as user input,
+        # regardless of is_from_me — see class docstring. We still report
+        # max_rowid across ALL returned rows so last_seen advances past the
+        # skipped ones; otherwise they'd be re-fetched forever.
+        result: list[dict[str, Any]] = []
+        max_rowid = last_rowid
+        for r in rows:
+            max_rowid = max(max_rowid, int(r["rowid"]))
+            text = r["text"] or ""
+            if not text.strip():
+                continue
+            if text.startswith(OUTGOING_MARKER):
+                continue
+            result.append(self._row_to_dict(r))
+        return result, max_rowid
+
+    @staticmethod
+    def _row_to_dict(r: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "rowid": int(r["rowid"]),
+            "text": r["text"] or "",
+            "sent_at": _apple_ns_to_dt(int(r["date"])).isoformat() if r["date"] else None,
+            "sender": r["sender"],
+        }
 
     def latest_rowid(self) -> int:
         """Return the highest message ROWID currently in chat.db.
@@ -160,9 +253,14 @@ class ChatSender:
         """
 
     def send(self, text: str) -> tuple[bool, str]:
-        """Send `text` via iMessage. Returns (ok, error_message_if_not)."""
+        """Send `text` via iMessage. Returns (ok, error_message_if_not).
+
+        Outgoing text is prefixed with OUTGOING_MARKER (zero-width space)
+        so ChatReader's self-mode filter can ignore the relay's own
+        replies and avoid an infinite loop. Invisible to the human reader.
+        """
         try:
-            applescript.AppleScript(source=self._script(text)).run()
+            applescript.AppleScript(source=self._script(OUTGOING_MARKER + text)).run()
             return True, ""
         except applescript.ScriptError as e:
             return False, f"AppleScript error: {e}"
@@ -177,10 +275,18 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def _run_daemon(target_handle: str, poll_interval: float) -> None:
+async def _run_daemon(
+    mode: str,
+    target_handle: str,
+    self_handles: list[str],
+    poll_interval: float,
+) -> None:
     store = MemoryStore()
-    reader = ChatReader(target_handle)
-    sender = ChatSender(target_handle)
+    reader = ChatReader(mode=mode, target_handle=target_handle, self_handles=self_handles)
+    # In self mode we send replies back to the same self handle the user
+    # is texting. In contact mode we send to the contact.
+    sender_handle = self_handles[0] if mode == MODE_SELF else target_handle
+    sender = ChatSender(sender_handle)
 
     # On a fresh install, start from "now" — don't replay history.
     last_seen_str = store.get_state(LAST_SEEN_KEY)
@@ -194,10 +300,11 @@ async def _run_daemon(target_handle: str, poll_interval: float) -> None:
         print(f"resuming from rowid {last_seen}")
 
     options = build_options(store)
-    print(
-        f"relay started for {target_handle} (poll every {poll_interval}s). "
-        "ctrl-c to stop."
-    )
+    if mode == MODE_SELF:
+        watching = f"self mode (chats: {', '.join(self_handles)})"
+    else:
+        watching = f"contact mode (sender: {target_handle})"
+    print(f"relay started — {watching}, poll every {poll_interval}s. ctrl-c to stop.")
 
     # One long-running SDK session for the whole relay process. Conversation
     # rollover (4h gap) updates only the archive's conversation_id; the SDK
@@ -210,18 +317,13 @@ async def _run_daemon(target_handle: str, poll_interval: float) -> None:
         )
         while True:
             try:
-                new_msgs = reader.fetch_new_since(last_seen)
+                new_msgs, max_rowid = reader.fetch_new_since(last_seen)
             except Exception as e:  # noqa: BLE001
                 print(f"[reader error] {e}", file=sys.stderr)
                 await asyncio.sleep(poll_interval)
                 continue
 
             for msg in new_msgs:
-                if not msg["text"].strip():
-                    last_seen = msg["rowid"]
-                    store.set_state(LAST_SEEN_KEY, str(last_seen))
-                    continue
-
                 # 4h-gap rollover check. We only roll the archive's
                 # conversation_id — the SDK session is left alone.
                 conversation_id = store.resume_or_open_conversation(
@@ -237,8 +339,6 @@ async def _run_daemon(target_handle: str, poll_interval: float) -> None:
                     )
                 except Exception as e:  # noqa: BLE001
                     print(f"[agent error] {e}", file=sys.stderr)
-                    last_seen = msg["rowid"]
-                    store.set_state(LAST_SEEN_KEY, str(last_seen))
                     continue
 
                 if reply:
@@ -250,7 +350,11 @@ async def _run_daemon(target_handle: str, poll_interval: float) -> None:
                 else:
                     print("[no reply]")
 
-                last_seen = msg["rowid"]
+            # Advance past everything we saw (including filtered-out rows
+            # like empty pseudo-messages and our own marker-tagged replies)
+            # so they don't get re-fetched forever.
+            if max_rowid > last_seen:
+                last_seen = max_rowid
                 store.set_state(LAST_SEEN_KEY, str(last_seen))
 
             await asyncio.sleep(poll_interval)
@@ -259,13 +363,21 @@ async def _run_daemon(target_handle: str, poll_interval: float) -> None:
 # ─── Diagnostics ─────────────────────────────────────────────────────────────
 
 
-def _check(target_handle: str | None) -> int:
+def _check(mode: str, target_handle: str, self_handles: list[str]) -> int:
     print("=== iMessage relay diagnostics ===\n")
+
+    if mode not in (MODE_CONTACT, MODE_SELF):
+        print(f"✗ IMESSAGE_MODE = {mode!r} (must be 'contact' or 'self')")
+        return 1
+    print(f"✓ IMESSAGE_MODE = {mode}")
 
     if not target_handle:
         print("✗ TARGET_PHONE_NUMBER is not set in .env")
         return 1
     print(f"✓ TARGET_PHONE_NUMBER = {target_handle}")
+
+    if mode == MODE_SELF:
+        print(f"✓ self handles = {self_handles}")
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("✗ ANTHROPIC_API_KEY is not set in .env")
@@ -276,7 +388,7 @@ def _check(target_handle: str | None) -> int:
         print(f"✗ chat.db not found at {CHAT_DB}")
         return 1
 
-    reader = ChatReader(target_handle)
+    reader = ChatReader(mode=mode, target_handle=target_handle, self_handles=self_handles)
     ok, why = reader.can_read()
     if not ok:
         print(f"✗ cannot read chat.db: {why}")
@@ -305,11 +417,13 @@ def _check(target_handle: str | None) -> int:
 
 
 def main() -> None:
+    mode = os.environ.get("IMESSAGE_MODE", MODE_CONTACT).strip().lower()
     target_handle = os.environ.get("TARGET_PHONE_NUMBER", "").strip()
+    self_handles = _self_handles() if mode == MODE_SELF else []
     poll_interval = float(os.environ.get("IMESSAGE_POLL_INTERVAL", "5"))
 
     if "--check" in sys.argv:
-        sys.exit(_check(target_handle))
+        sys.exit(_check(mode, target_handle, self_handles))
 
     if not target_handle:
         print("error: TARGET_PHONE_NUMBER not set in .env", file=sys.stderr)
@@ -317,9 +431,12 @@ def main() -> None:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("error: ANTHROPIC_API_KEY not set in .env", file=sys.stderr)
         sys.exit(1)
+    if mode == MODE_SELF and not self_handles:
+        print("error: IMESSAGE_MODE=self requires at least TARGET_PHONE_NUMBER set", file=sys.stderr)
+        sys.exit(1)
 
     try:
-        asyncio.run(_run_daemon(target_handle, poll_interval))
+        asyncio.run(_run_daemon(mode, target_handle, self_handles, poll_interval))
     except KeyboardInterrupt:
         print("\nrelay stopped.")
 

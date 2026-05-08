@@ -159,8 +159,10 @@ Step 1 of 5 (skeleton) — **in progress**. See the build plan in conversation h
 | 1. Scaffold v1/ skeleton + README | done |
 | 2. Stand up agent host with personality (no integrations yet) | done |
 | 3. Memory MCP server (audit log + conversation archive + facts) | done |
-| 4. Gmail / Todoist / Calendar MCP servers | not started |
-| 5. iMessage relay + scheduler + LaunchAgents | not started |
+| 4. Gmail / Todoist / Calendar MCP servers | done |
+| 5a. iMessage relay (contact + self mode) | done |
+| 5b. Scheduler (morning brief + Sunday review) | not started |
+| 5c. LaunchAgent plists | not started |
 
 ## Personality
 
