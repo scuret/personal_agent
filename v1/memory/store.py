@@ -76,6 +76,13 @@ CREATE TABLE IF NOT EXISTS facts (
     is_active        INTEGER DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_facts_category ON facts(category, is_active);
+
+-- Generic key-value state for daemons (e.g. relay's last-seen ROWID).
+CREATE TABLE IF NOT EXISTS state (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -117,6 +124,46 @@ class MemoryStore:
             (cid, _now(), source, json.dumps(metadata or {})),
         )
         return cid
+
+    def resume_or_open_conversation(
+        self,
+        source: str,
+        gap_threshold_hours: float = 4.0,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Pick up the most recent same-source conversation if it's still warm.
+
+        "Warm" means the last archived message in that conversation is within
+        `gap_threshold_hours`. Otherwise close it (if open) and start a new one.
+        Used by the iMessage relay for the 4h-gap rollover rule.
+        """
+        c = self._conn()
+        row = c.execute(
+            """SELECT c.id,
+                      (SELECT MAX(m.created_at) FROM messages m WHERE m.conversation_id = c.id) AS last_msg
+                 FROM conversations c
+                WHERE c.source = ? AND c.ended_at IS NULL
+             ORDER BY c.started_at DESC
+                LIMIT 1""",
+            (source,),
+        ).fetchone()
+        if row:
+            # An open conversation exists. Two reuse-cases:
+            #   (a) it has messages and the gap is within threshold
+            #   (b) it has no messages yet (just opened, never used) — reuse
+            #       so we don't accumulate empty conversation rows
+            if not row["last_msg"]:
+                return str(row["id"])
+            last = datetime.fromisoformat(row["last_msg"])
+            now = datetime.now(timezone.utc)
+            if (now - last).total_seconds() <= gap_threshold_hours * 3600:
+                return str(row["id"])
+            # Stale — close it and fall through to opening a fresh one.
+            c.execute(
+                "UPDATE conversations SET ended_at = ? WHERE id = ?",
+                (_now(), row["id"]),
+            )
+        return self.open_conversation(source=source, metadata=metadata)
 
     def close_conversation(self, conversation_id: str) -> None:
         self._conn().execute(
@@ -243,3 +290,18 @@ class MemoryStore:
     def deactivate_fact(self, fact_id: int) -> None:
         """Soft-delete a fact (sets is_active=0)."""
         self._conn().execute("UPDATE facts SET is_active = 0 WHERE id = ?", (fact_id,))
+
+    # ─── Generic key-value state ────────────────────────────────────────────
+
+    def get_state(self, key: str, default: str | None = None) -> str | None:
+        row = self._conn().execute(
+            "SELECT value FROM state WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else default
+
+    def set_state(self, key: str, value: str) -> None:
+        self._conn().execute(
+            """INSERT INTO state (key, value, updated_at) VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at""",
+            (key, value, _now()),
+        )

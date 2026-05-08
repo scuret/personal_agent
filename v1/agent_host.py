@@ -120,7 +120,7 @@ async def _block_send_tools(
     return {}
 
 
-def _build_options(store: MemoryStore) -> ClaudeAgentOptions:
+def build_options(store: MemoryStore) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
         # Personality + runtime context + injected facts.
         system_prompt=build_system_prompt(store),
@@ -174,6 +174,57 @@ def _extract_tool_calls(message: Any) -> list[dict[str, Any]]:
     ]
 
 
+async def process_turn(
+    client: ClaudeSDKClient,
+    store: MemoryStore,
+    conversation_id: str,
+    user_text: str,
+) -> str:
+    """Submit one user turn, archive + audit everything, return assistant text.
+
+    The relay (and scheduler, when it lands) call this directly. It owns the
+    whole bookkeeping cycle for a single turn so callers don't have to
+    duplicate the archive/audit logic.
+    """
+    store.append_message(conversation_id, "user", user_text)
+    store.log_api_event("user_input", user_text, conversation_id)
+
+    await client.query(user_text)
+
+    reply_chunks: list[str] = []
+    async for message in client.receive_response():
+        text = _extract_text(message)
+        tool_calls = _extract_tool_calls(message)
+
+        if text or tool_calls:
+            store.append_message(
+                conversation_id,
+                "assistant",
+                text or "",
+                tool_calls=tool_calls or None,
+            )
+            if text:
+                store.log_api_event("assistant_text", text, conversation_id)
+                reply_chunks.append(text)
+            for tc in tool_calls:
+                store.log_api_event("tool_use", tc, conversation_id)
+
+        if isinstance(message, ResultMessage):
+            meta: dict[str, Any] = {}
+            for attr in ("total_cost_usd", "duration_ms", "num_turns"):
+                v = getattr(message, attr, None)
+                if v is not None:
+                    meta[attr] = v
+            usage = getattr(message, "usage", None)
+            if usage is not None:
+                meta["usage"] = (
+                    usage.__dict__ if hasattr(usage, "__dict__") else str(usage)
+                )
+            store.log_api_event("result", str(message), conversation_id, metadata=meta)
+
+    return "\n".join(reply_chunks)
+
+
 async def _read_user_input(prompt: str) -> str | None:
     """Read a line from stdin without blocking the event loop."""
     loop = asyncio.get_running_loop()
@@ -195,11 +246,11 @@ async def _chat() -> None:
 
     store = MemoryStore()
     conversation_id = store.open_conversation(source="cli")
-    options = _build_options(store)
+    options = build_options(store)
 
     print(
-        "personal agent — step 3 dev REPL\n"
-        f"(memory wired in; conversation_id={conversation_id})\n"
+        "personal agent — dev REPL\n"
+        f"(conversation_id={conversation_id})\n"
         "ctrl-d or ctrl-c to exit\n"
     )
 
@@ -213,56 +264,8 @@ async def _chat() -> None:
                 user_input = user_input.strip()
                 if not user_input:
                     continue
-
-                # Archive + audit the user's turn before sending it.
-                store.append_message(conversation_id, "user", user_input)
-                store.log_api_event("user_input", user_input, conversation_id)
-
-                await client.query(user_input)
-
-                printed_header = False
-                async for message in client.receive_response():
-                    text = _extract_text(message)
-                    tool_calls = _extract_tool_calls(message)
-
-                    if text or tool_calls:
-                        # One row per assistant message in the archive,
-                        # capturing both text and any tool calls it requested.
-                        store.append_message(
-                            conversation_id,
-                            "assistant",
-                            text or "",
-                            tool_calls=tool_calls or None,
-                        )
-                        if text:
-                            store.log_api_event("assistant_text", text, conversation_id)
-                        for tc in tool_calls:
-                            store.log_api_event("tool_use", tc, conversation_id)
-
-                    # ResultMessage carries usage/cost info — log it.
-                    if isinstance(message, ResultMessage):
-                        meta = {}
-                        for attr in ("total_cost_usd", "duration_ms", "num_turns"):
-                            v = getattr(message, attr, None)
-                            if v is not None:
-                                meta[attr] = v
-                        usage = getattr(message, "usage", None)
-                        if usage is not None:
-                            meta["usage"] = (
-                                usage.__dict__ if hasattr(usage, "__dict__") else str(usage)
-                            )
-                        store.log_api_event(
-                            "result", str(message), conversation_id, metadata=meta
-                        )
-
-                    if text:
-                        if not printed_header:
-                            print("agent: ", end="")
-                            printed_header = True
-                        print(text)
-
-                if not printed_header:
-                    print("agent: (no text response)")
+                reply = await process_turn(client, store, conversation_id, user_input)
+                print(f"agent: {reply}" if reply else "agent: (no text response)")
                 print()
     finally:
         store.close_conversation(conversation_id)

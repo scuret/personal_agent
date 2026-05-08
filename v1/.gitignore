@@ -1,5 +1,9 @@
-# Secrets and credentials
+# Secrets and credentials. Block every .env* variant (editor backups,
+# shell-quoting accidents like ".env\", per-env files like .env.local)
+# but explicitly keep .env.example as the committed template.
 .env
+.env*
+!.env.example
 config/credentials.json
 
 # Cached OAuth tokens and runtime state
