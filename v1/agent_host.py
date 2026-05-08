@@ -47,6 +47,7 @@ from claude_agent_sdk import (  # noqa: E402
 from claude_agent_sdk.types import HookContext  # noqa: E402
 
 from memory.store import MemoryStore  # noqa: E402
+from mcp_servers.calendar_server import create_calendar_mcp_server  # noqa: E402
 from mcp_servers.gmail_server import create_gmail_mcp_server  # noqa: E402
 from mcp_servers.memory_server import create_memory_mcp_server  # noqa: E402
 from mcp_servers.todoist_server import create_todoist_mcp_server  # noqa: E402
@@ -80,6 +81,13 @@ GMAIL_TOOLS = [
     "mcp__gmail__gmail_archive",
     "mcp__gmail__gmail_mark_read",
     "mcp__gmail__gmail_delete_draft",
+]
+
+CALENDAR_TOOLS = [
+    "mcp__calendar__calendar_list_events",
+    "mcp__calendar__calendar_search_events",
+    "mcp__calendar__calendar_check_availability",
+    "mcp__calendar__calendar_get_event",
 ]
 
 
@@ -125,10 +133,20 @@ def _build_options(store: MemoryStore) -> ClaudeAgentOptions:
             "memory": create_memory_mcp_server(store),
             "todoist": create_todoist_mcp_server(),
             "gmail": create_gmail_mcp_server(),
+            "calendar": create_calendar_mcp_server(),
         },
         # Allowlist what tools the agent may call. Anything not listed here
-        # is blocked. Calendar lands in the next sub-commit (step 4c).
-        allowed_tools=MEMORY_TOOLS + TODOIST_TOOLS + GMAIL_TOOLS,
+        # is blocked. v1 integrations are now complete.
+        allowed_tools=MEMORY_TOOLS + TODOIST_TOOLS + GMAIL_TOOLS + CALENDAR_TOOLS,
+        # Isolate the agent from the user's Claude Code environment:
+        #   * `tools=[]` disables built-in CLI primitives (Bash, Read, Edit,
+        #     ToolSearch, etc.). The agent runs ONLY our MCP-defined tools.
+        #   * `strict_mcp_config=True` ignores user/project/plugin MCP server
+        #     configs (notably the user's claude.ai integrations like
+        #     mcp__claude_ai_Google_Calendar__*) so the agent doesn't shop
+        #     for fallbacks when one of our local tools errors.
+        tools=[],
+        strict_mcp_config=True,
         # Safety hook: deny anything with "send" in the tool name. The
         # matcher=".*" runs the hook on every tool call regardless of name.
         hooks={
