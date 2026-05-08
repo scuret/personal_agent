@@ -38,12 +38,16 @@ from claude_agent_sdk import (  # noqa: E402
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    HookMatcher,
+    PreToolUseHookInput,
     ResultMessage,
     TextBlock,
     ToolUseBlock,
 )
+from claude_agent_sdk.types import HookContext  # noqa: E402
 
 from memory.store import MemoryStore  # noqa: E402
+from mcp_servers.gmail_server import create_gmail_mcp_server  # noqa: E402
 from mcp_servers.memory_server import create_memory_mcp_server  # noqa: E402
 from mcp_servers.todoist_server import create_todoist_mcp_server  # noqa: E402
 from system_prompt import build_system_prompt  # noqa: E402
@@ -68,6 +72,45 @@ TODOIST_TOOLS = [
     "mcp__todoist__todoist_list_labels",
 ]
 
+GMAIL_TOOLS = [
+    "mcp__gmail__gmail_search",
+    "mcp__gmail__gmail_read",
+    "mcp__gmail__gmail_create_draft",
+    "mcp__gmail__gmail_list_drafts",
+    "mcp__gmail__gmail_archive",
+    "mcp__gmail__gmail_mark_read",
+    "mcp__gmail__gmail_delete_draft",
+]
+
+
+# ─── Safety hooks ───────────────────────────────────────────────────────────
+#
+# Belt-and-suspenders: even though we never expose a send-shaped tool, this
+# PreToolUse hook denies any tool call whose name contains "send" (case-
+# insensitive). Triple defense alongside the system prompt and the absent
+# tool surface. Returns the SDK's "deny" decision shape:
+#   { "hookSpecificOutput": { ... permissionDecision: "deny" ... } }
+
+
+async def _block_send_tools(
+    input_data: PreToolUseHookInput,
+    _tool_use_id: str | None,
+    _context: HookContext,
+) -> dict[str, Any]:
+    name = input_data.get("tool_name", "") if isinstance(input_data, dict) else getattr(input_data, "tool_name", "")
+    if "send" in (name or "").lower():
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    f"tool '{name}' blocked by no-auto-send invariant. "
+                    "drafts must go to Gmail Drafts; the principal sends manually."
+                ),
+            }
+        }
+    return {}
+
 
 def _build_options(store: MemoryStore) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
@@ -81,10 +124,16 @@ def _build_options(store: MemoryStore) -> ClaudeAgentOptions:
         mcp_servers={
             "memory": create_memory_mcp_server(store),
             "todoist": create_todoist_mcp_server(),
+            "gmail": create_gmail_mcp_server(),
         },
         # Allowlist what tools the agent may call. Anything not listed here
-        # is blocked. Gmail + Calendar land in the next sub-commits of step 4.
-        allowed_tools=MEMORY_TOOLS + TODOIST_TOOLS,
+        # is blocked. Calendar lands in the next sub-commit (step 4c).
+        allowed_tools=MEMORY_TOOLS + TODOIST_TOOLS + GMAIL_TOOLS,
+        # Safety hook: deny anything with "send" in the tool name. The
+        # matcher=".*" runs the hook on every tool call regardless of name.
+        hooks={
+            "PreToolUse": [HookMatcher(matcher=".*", hooks=[_block_send_tools])],
+        },
     )
 
 
