@@ -137,17 +137,43 @@ This pops a browser, you grant access, the token is cached at `data/google_token
 
 ### 4. Run components
 
-Each component is its own process. In dev, run them in separate terminals; in production, install as LaunchAgents.
+Each component is its own process. In dev, run them in separate terminals; for daily use, install as LaunchAgents (auto-start on login).
 
 ```bash
-# Terminal 1 — agent host
+# Terminal 1 — interactive REPL (optional, useful for testing)
 python agent_host.py
 
 # Terminal 2 — iMessage relay (Mac only)
-python -m relay.imessage_relay
+python -m relay.imessage_relay --check    # diagnostics
+python -m relay.imessage_relay            # daemon
 
 # Terminal 3 — trigger scheduler
-python -m scheduler.triggers
+python -m scheduler.triggers --check                 # diagnostics
+python -m scheduler.triggers --run-now morning_brief # fire one trigger now
+python -m scheduler.triggers                          # daemon
+```
+
+### 5. Auto-start on login (LaunchAgents)
+
+Once everything works manually, install the relay + scheduler as
+LaunchAgents so they auto-start whenever you log in:
+
+```bash
+./launch_agents/install.sh
+```
+
+This renders the plists with absolute paths, copies them to
+`~/Library/LaunchAgents/`, and loads them with `launchctl`. Logs go to
+`data/{relay,scheduler}.{log,err.log}` (gitignored). Tail to verify:
+
+```bash
+tail -f data/relay.log data/relay.err.log
+```
+
+To remove:
+
+```bash
+./launch_agents/uninstall.sh
 ```
 
 ## Build status
@@ -161,8 +187,8 @@ Step 1 of 5 (skeleton) — **in progress**. See the build plan in conversation h
 | 3. Memory MCP server (audit log + conversation archive + facts) | done |
 | 4. Gmail / Todoist / Calendar MCP servers | done |
 | 5a. iMessage relay (contact + self mode) | done |
-| 5b. Scheduler (morning brief + Sunday review) | not started |
-| 5c. LaunchAgent plists | not started |
+| 5b. Scheduler (morning brief + Sunday review) | done |
+| 5c. LaunchAgent plists | done |
 
 ## Personality
 

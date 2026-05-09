@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.personal-agent.relay</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__V1_DIR__/.venv/bin/python</string>
+        <string>-m</string>
+        <string>relay.imessage_relay</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__V1_DIR__</string>
+
+    <!-- Start at user login. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart on crash. ThrottleInterval prevents tight restart loops. -->
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <!-- Logs go to data/ which is gitignored. -->
+    <key>StandardOutPath</key>
+    <string>__V1_DIR__/data/relay.log</string>
+    <key>StandardErrorPath</key>
+    <string>__V1_DIR__/data/relay.err.log</string>
+
+    <!-- launchd jobs don't inherit the user's shell PATH; provide a
+         minimal one that covers Homebrew + Node (the SDK shells out to
+         a bundled Claude Code CLI under the hood). -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
