@@ -252,6 +252,21 @@ tail -f data/relay.log data/relay.err.log
 tail -f data/scheduler.log data/scheduler.err.log
 ```
 
+### Verify all your API tokens are valid
+
+```bash
+python -m tools.token_health
+```
+
+Pings each provider's identity / metadata endpoint and reports valid /
+invalid / expiring tokens. Catches silent expirations (notably Dropbox
+`sl.u.` tokens that auto-expire ~4h after issue) and missing-scope
+issues. Each check uses the cheapest free read-only call available;
+Brave + YouTube each cost 1 quota unit per run, the rest are free.
+
+Run it weekly, or after rotating any token, or whenever an integration
+starts misbehaving.
+
 ### Tune the personality
 
 Edit `config/personality.md` and restart the relay (or the agent host if you're running it manually) to pick up changes.
