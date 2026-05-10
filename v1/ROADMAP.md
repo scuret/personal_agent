@@ -142,6 +142,88 @@ These aren't user-facing capabilities but improve daily use.
 - ~~"Query archive" tool~~ — shipped as the `archive` sub-agent.
 - ~~Recurring reminders~~ — shipped (`remind_recurring` tool with daily / weekdays / weekly / monthly patterns).
 
+## Going-public prep (do BEFORE flipping the repo to public)
+
+A checklist of items to complete before changing the GitHub repo from
+private to public. Most are remote-doable. Don't push the repo public
+until everything in this section is done — once a public push lands,
+the audit is irreversible (anyone can clone before you tighten things).
+
+### 1. Scrub personal email history (REQUIRED)
+- **What:** Commit `bd1168a` and the surrounding history contain 15
+  real email addresses of friends, family, and colleagues from the
+  era when `config/triggers.yaml` was tracked. Removing the file in
+  a later commit doesn't remove the addresses from history — anyone
+  cloning a public repo can `git log -p` and read them.
+- **Action:** `pip install git-filter-repo` then
+  `git filter-repo --path v1/config/triggers.yaml --invert-paths`
+  to rewrite history with that file removed from every commit. Then
+  force-push (only safe because nothing's been pushed yet).
+- **Verify:** `git log --all -p | grep -i <your-personal-search-term>` should return zero
+  matches (or substitute any other personal address).
+
+### 2. Add a LICENSE
+- **What:** Without a LICENSE file the default is "all rights
+  reserved" — people can read but legally can't fork, modify, or
+  reuse. For a personal-utility template MIT is conventional.
+- **Action:** Drop a standard MIT LICENSE at the repo root with the
+  copyright year + holder name.
+
+### 3. Cost disclaimer in README
+- **What:** Public visitors might assume this is a free demo. It's
+  not — every Claude turn costs real money (~$0.05–0.10 typical;
+  build-day spikes much higher). The README should say so up front
+  so nobody runs it expecting free.
+- **Action:** Add a short "Costs" section near the top of README.md
+  noting Anthropic API usage costs + how `tools/cost_report.py` lets
+  you watch spend.
+
+### 4. Generalize README language for public audience
+- **What:** Current README assumes "the principal" is a specific
+  person and reads like internal documentation. For a public repo
+  it should read like a template ("fork this for your own use",
+  "this is a personal project — code is shared as-is").
+- **Action:** Reword the lead paragraphs + add a "What this is /
+  isn't" section. Drop any phrasing that assumes the reader is the
+  original author.
+
+### 5. Switch to GitHub noreply email for future commits
+- **What:** Every existing commit has author `scuret <<your-noreply-email>>`.
+  Going public exposes that email on every commit. Past commits would
+  need filter-repo to fix; future commits can use a noreply alias.
+- **Action:** Set local git config to a GitHub-provided noreply email
+  (find at github.com/settings/emails). Optionally rewrite past
+  commits with `git filter-repo --email-callback` for consistency.
+
+### 6. Security disclosure path
+- **What:** Public repos receive vulnerability reports. Without a
+  designated path, reports may end up in public issues — bad.
+- **Action:** Add a brief SECURITY.md or a "security disclosure"
+  paragraph in README pointing at a non-public channel (private
+  email, GitHub Security Advisory, etc.).
+
+### 7. CONTRIBUTING.md (optional)
+- **What:** If you'll accept issues/PRs from strangers, set
+  expectations: scope of the project, how to redact secrets when
+  filing bugs, code style.
+- **Action:** Short Markdown file at repo root.
+
+### 8. Repo metadata (optional)
+- **What:** GitHub topics + description + a clean README banner
+  improve discoverability.
+- **Action:** Set via `gh repo edit` or the web UI: description like
+  "personal AI agent on Claude Agent SDK with iMessage / Telegram
+  surfaces"; topics like `claude`, `agent`, `imessage`, `telegram`,
+  `personal-assistant`, `mcp`.
+
+### 9. Final secret sweep
+- **What:** Belt-and-suspenders before push.
+- **Action:** Run `git log --all -p | grep -iE` against the secret
+  patterns from `tools/token_health.py` (sk-ant-, ghp_, ntn_, sl.u.,
+  AIzaSy, BSAGE0). Already verified clean as of commit `e2024ca`,
+  but re-run after step 1 since filter-repo will have rewritten
+  every commit hash.
+
 ## Pending verification
 
 Things that are shipped but haven't been live-validated end-to-end yet.
