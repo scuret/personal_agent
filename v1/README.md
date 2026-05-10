@@ -337,12 +337,17 @@ The local-only files this project produces (`.env`, `config/credentials.json`, `
 
 ## What's not in v1
 
-Deferred until later:
-- Calendar event creation/update/delete (needs broader OAuth scope — already wired in code, just disabled until re-auth)
-- Drive / Docs / Sheets / LinkedIn / Canva / Reddit sub-agents
-- Vector-based memory search (uses SQLite LIKE today)
-- Group chat support in the relay
-- Dedicated agent identity (separate Apple ID / Google Voice)
-- Pushover / push backup channel
+See **[ROADMAP.md](./ROADMAP.md)** for the full planned list — what each
+item adds, why it's not in yet, and what's needed to land it. The roadmap
+distinguishes items that are remote-buildable today from items that need
+local Mac access (browser-OAuth flows, device-bound account setup, etc.).
 
-Pick any of these up by asking the agent (or the build assistant) to add them.
+Highlights:
+
+- **Remote-buildable now:** Pushover backup channel, vector memory (Voyage),
+  stocks/crypto, Wikipedia, Reddit (public read), group chat support in
+  the relay.
+- **Needs local Mac:** Calendar writes, Drive / Docs / Sheets, Dropbox
+  OAuth refresh flow, Spotify, Canva, LinkedIn, dedicated agent identity.
+- **Operational improvements:** tighter brief/review prompts, audit-log
+  analytics, "query archive" SQL tool, recurring reminders.
