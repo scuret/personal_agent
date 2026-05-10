@@ -101,6 +101,24 @@ Each item lists what it adds, why it's not in yet, and what unblocks it.
 - **Cost:** Haiku at ~$1/M input tokens; ~50 unread emails/day × ~200 tokens each = ~$0.01/day.
 - **Effort:** ~hour (classifier function + prompt + integration with the rules-pass-through, plus rate-limiting so a flurry of "yes" classifications batches into one notification not N pings).
 
+### Discord transport
+- **What:** Third option for `RELAY_TRANSPORT` alongside `imessage` and `telegram`. Discord bot you create at discord.com/developers/applications, allowlisted by user/server ID, supports text + image attachments (same vision flow as the other transports).
+- **Why deferred:** Just hadn't gotten to it.
+- **Unblocks:** Web setup (Discord Developer Portal → Application → Bot → token + invite link). Wire a `relay/discord_relay.py` that mirrors the structure of `telegram_relay.py`. Update `relay/sender.py` factory + `relay/run.py` dispatcher. **Remote-buildable.**
+- **Effort:** ~hour.
+
+### Slack transport
+- **What:** Fourth option for `RELAY_TRANSPORT`. Slack bot in a workspace; useful for work-context messaging or for keeping the agent in a Slack DM. Allowlisted by Slack user ID.
+- **Why deferred:** Not yet built; lower priority for personal use than Discord/Telegram unless you live in Slack for work.
+- **Unblocks:** Web setup at api.slack.com/apps (create app → enable Socket Mode for polling, or webhooks for events → bot token + signing secret). Mirrors the relay/telegram_relay.py pattern. **Remote-buildable.**
+- **Effort:** ~hour.
+
+### SMS via Twilio transport
+- **What:** Fifth option for `RELAY_TRANSPORT`. SMS bidirectional — universal reach (any phone, no app, no Apple/Google ecosystem dependency), bypasses every iMessage/DND/Focus quirk.
+- **Why deferred:** Costs money (~$1/mo for a phone number + ~$0.01/msg outbound) and SMS is text-only (no image attachments → vision flow is unavailable). Worth it as a fallback / travel transport, not as primary.
+- **Unblocks:** Twilio signup → phone number + Account SID + Auth Token. Webhook-based incoming messages (so the daemon needs to expose a public HTTPS endpoint — ngrok for dev, hosted for production). `relay/sms_relay.py` following the existing transport pattern. **Remote-buildable for the code; deployment needs a public URL.**
+- **Effort:** ~hour for code; another hour for deployment story (ngrok or a real host).
+
 ### Group chat support in the iMessage relay
 - **What:** Let you @-mention the agent in a family / work group iMessage thread (instead of only watching note-to-self chats), with a whitelist of allowed group chats and explicit @-mention triggering so the agent doesn't respond to every message in a group.
 - **Why deferred:** Loop prevention is trickier in shared chats (your own outgoing messages from any device flow through too); the personality contract around safety is harder when third parties are reading.
