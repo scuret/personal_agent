@@ -1,0 +1,78 @@
+# Trigger configuration — what wakes the scheduler up unprompted.
+#
+# This file is the COMMITTED TEMPLATE. The real config lives in
+# config/triggers.yaml (gitignored — your personal allowlist of
+# senders shouldn't be in version control). Generate the live file
+# by running ./install.sh and walking through the triggers step,
+# or hand-copy this template and edit.
+#
+# The scheduler re-reads the live file on every tick (~30s), so
+# changes take effect within seconds — no daemon restart needed.
+
+# Real-time email pings
+# ─────────────────────
+# When an incoming Gmail message matches either condition below, the
+# scheduler sends a one-line notification over the active relay
+# transport (iMessage or Telegram). No auto-archive, no auto-reply —
+# just a heads-up.
+#
+# Defaults to disabled so a fresh install doesn't start pinging on
+# every "URGENT" newsletter subject. Flip `enabled: true` once you've
+# tuned the senders + keywords below for your inbox.
+
+email_triggers:
+
+  # Master switch. False = scheduler doesn't poll Gmail at all.
+  enabled: false
+
+  # How often the scheduler checks for new matching unread email.
+  # Lower = faster pings, more Gmail API calls. 15 min is reasonable.
+  every_minutes: 15
+
+  # Specific email addresses or domain fragments. Match is case-
+  # insensitive substring against the From header. Domain fragments
+  # like "@family.com" match anyone at that domain.
+  # Examples: "boss@company.com", "@family.com", "alerts@bank.com"
+  important_senders: []
+
+  # Subject/snippet keyword matches. Case-insensitive substring.
+  # Anything matching here triggers a ping regardless of sender.
+  urgency_keywords:
+    - urgent
+    - deadline
+    - action required
+    - time sensitive
+    - asap
+
+# Scheduled briefings
+# ───────────────────
+# All times are in USER_TIMEZONE from .env.
+
+scheduled:
+
+  morning_brief:
+    enabled: true
+    # 24-hour local time. Default 07:30; the user wants between 7-9am.
+    time: "07:30"
+    # If true, skip Saturday and Sunday.
+    weekdays_only: false
+    # What to include in the brief.
+    include:
+      - todays_calendar
+      - top_tasks
+      - urgent_unread_emails
+
+  weekly_review:
+    enabled: true
+    day: sunday
+    time: "20:00"
+    include:
+      - incomplete_tasks_last_week
+      - upcoming_week_calendar
+
+# Overdue task reminders (deferred — set enabled: true if you want hourly nudges)
+overdue_check:
+  enabled: false
+  cadence_minutes: 60
+  # Only ping for priority >= this value. Todoist priority: 1=lowest, 4=urgent.
+  min_priority: 3
