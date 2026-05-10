@@ -82,6 +82,68 @@ def _apple_ns_to_dt(ns: int) -> datetime:
     return APPLE_EPOCH + timedelta(microseconds=ns / 1000)
 
 
+def _decode_attributed_body(blob: bytes | None) -> str | None:
+    """Extract plain text from a Messages attributedBody binary blob.
+
+    chat.db stores message text in two columns: `text` (plain) and
+    `attributedBody` (a serialized NSAttributedString in Apple's "streamtyped"
+    NSArchiver format). Most of the time both are populated, but when iOS
+    Focus / DND is on, iCloud syncs the row to the Mac with `text=NULL`
+    while the actual content is preserved in `attributedBody`. Without
+    decoding it we'd skip those messages as "empty" and never reply.
+
+    Uses pyobjc's NSUnarchiver (deprecated but still functional on current
+    macOS) — already available via the py-applescript dependency.
+    """
+    if not blob:
+        return None
+    try:
+        # Imported lazily so the module stays importable in non-macOS test
+        # contexts even though the daemon as a whole is macOS-only.
+        import Foundation  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+    try:
+        ns_data = Foundation.NSData.dataWithBytes_length_(blob, len(blob))
+        unarchiver = Foundation.NSUnarchiver.alloc().initForReadingWithData_(ns_data)
+        if unarchiver is None:
+            return None
+        obj = unarchiver.decodeObject()
+        if obj is None:
+            return None
+        # NSAttributedString.string() returns the plain text without
+        # formatting attributes.
+        if hasattr(obj, "string"):
+            return str(obj.string())
+        return str(obj)
+    except Exception:  # noqa: BLE001 — many failure modes; fall back to None
+        return None
+
+
+def _resolve_text(row: sqlite3.Row) -> str:
+    """Pull the message text out of a chat.db row, falling back to attributedBody.
+
+    Order of precedence:
+      1. `text` column if non-empty
+      2. NSAttributedString decoded from `attributedBody` if non-empty
+      3. empty string
+
+    The fallback exists because iOS Focus / DND causes iCloud to deliver
+    the row to the Mac with `text=NULL` while the actual content sits in
+    `attributedBody`. Without this we'd silently drop everything the user
+    sends from a Focus-active iPhone.
+    """
+    plain = (row["text"] or "").strip()
+    if plain:
+        return row["text"]
+    blob = row["attributedBody"] if "attributedBody" in row.keys() else None
+    if blob:
+        decoded = _decode_attributed_body(bytes(blob))
+        if decoded:
+            return decoded
+    return ""
+
+
 def _self_handles() -> list[str]:
     """Resolve the list of "self handles" used in self-mode.
 
@@ -163,7 +225,7 @@ class ChatReader:
     ) -> tuple[list[dict[str, Any]], int]:
         with self._connect() as conn:
             rows = conn.execute(
-                """SELECT m.ROWID AS rowid, m.text, m.date, h.id AS sender
+                """SELECT m.ROWID AS rowid, m.text, m.attributedBody, m.date, h.id AS sender
                      FROM message m
                 LEFT JOIN handle h ON m.handle_id = h.ROWID
                     WHERE m.is_from_me = 0
@@ -177,18 +239,16 @@ class ChatReader:
         max_rowid = last_rowid
         for r in rows:
             max_rowid = max(max_rowid, int(r["rowid"]))
-            text = r["text"] or ""
+            text = _resolve_text(r)
             if not text.strip():
-                # Empty incoming messages happen with image/sticker-only
-                # sends, tap-back reactions, and Apple's pseudo-rows. Log
-                # so the user can tell "no reply because empty" apart from
-                # "no reply because broken".
+                # Truly empty even after attributedBody fallback: image-
+                # only sends, tap-back reactions, Apple pseudo-rows.
                 print(
                     f"[skipped: empty text from {r['sender']} (rowid={r['rowid']})]",
                     flush=True,
                 )
                 continue
-            result.append(self._row_to_dict(r))
+            result.append(self._row_to_dict(r, text))
         return result, max_rowid
 
     def _fetch_self(
@@ -199,7 +259,8 @@ class ChatReader:
         placeholders = ",".join("?" * len(self.self_handles))
         with self._connect() as conn:
             rows = conn.execute(
-                f"""SELECT m.ROWID AS rowid, m.text, m.date, c.chat_identifier AS sender
+                f"""SELECT m.ROWID AS rowid, m.text, m.attributedBody, m.date,
+                            c.chat_identifier AS sender
                      FROM message m
                      JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
                      JOIN chat c ON c.ROWID = cmj.chat_id
@@ -209,21 +270,18 @@ class ChatReader:
                     LIMIT ?""",
                 (*self.self_handles, last_rowid, limit),
             ).fetchall()
-        # Skip empty rows (Apple inserts blank message records for tap-back
-        # reactions, read receipts, etc.) and skip our own replies (tagged
-        # with OUTGOING_MARKER). Everything else is treated as user input,
-        # regardless of is_from_me — see class docstring. We still report
-        # max_rowid across ALL returned rows so last_seen advances past the
-        # skipped ones; otherwise they'd be re-fetched forever.
+        # We treat any non-empty message in a self-handle chat as user
+        # input, regardless of is_from_me. That picks up both Mac-typed
+        # and iPhone-typed messages. Loop prevention is via OUTGOING_MARKER
+        # (a zero-width space prefix on every reply we send).
         #
-        # Empty-text skips get logged so "no reply" is debuggable. ZWSP-
-        # tagged skips are silent — they're our own outgoing replies and
-        # logging them on every poll cycle would be noise.
+        # We still report max_rowid across ALL returned rows so last_seen
+        # advances past skipped ones; otherwise they'd be re-fetched forever.
         result: list[dict[str, Any]] = []
         max_rowid = last_rowid
         for r in rows:
             max_rowid = max(max_rowid, int(r["rowid"]))
-            text = r["text"] or ""
+            text = _resolve_text(r)
             if text.startswith(OUTGOING_MARKER):
                 continue
             if not text.strip():
@@ -232,14 +290,14 @@ class ChatReader:
                     flush=True,
                 )
                 continue
-            result.append(self._row_to_dict(r))
+            result.append(self._row_to_dict(r, text))
         return result, max_rowid
 
     @staticmethod
-    def _row_to_dict(r: sqlite3.Row) -> dict[str, Any]:
+    def _row_to_dict(r: sqlite3.Row, text: str) -> dict[str, Any]:
         return {
             "rowid": int(r["rowid"]),
-            "text": r["text"] or "",
+            "text": text,
             "sent_at": _apple_ns_to_dt(int(r["date"])).isoformat() if r["date"] else None,
             "sender": r["sender"],
         }
