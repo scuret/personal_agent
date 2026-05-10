@@ -101,6 +101,28 @@ These aren't user-facing capabilities but improve daily use.
 - ~~"Query archive" tool~~ — shipped as the `archive` sub-agent.
 - **Recurring reminders** — currently only one-off; add cron-shaped expressions like "remind me every Tuesday at 9am to..." Pure code. ~30 min.
 
+## Pending verification
+
+Things that are shipped but haven't been live-validated end-to-end yet.
+Code is in main; just need a test session to confirm behavior.
+
+### Telegram transport — live test
+- **What:** Confirm `RELAY_TRANSPORT=telegram` works end-to-end from a
+  bot created via @BotFather: text from phone → relay picks up →
+  agent replies in Telegram → conversation is archived under
+  `source='telegram'`. Also verify image attachments (a photo with
+  caption goes through the vision flow). Also verify the scheduler
+  delivers the morning brief to Telegram when the transport is
+  switched.
+- **Why deferred:** Implementation landed in commit `ca6e763` but
+  hasn't been exercised against a real Telegram bot yet — current
+  daily use is still on iMessage.
+- **Unblocks:** Web setup at @BotFather (~3 min), find user id via
+  @userinfobot, paste both into `.env`, set `RELAY_TRANSPORT=telegram`,
+  reload the relay daemon. **Remote-buildable.**
+- **Effort:** ~15 min for a full smoke test (text, image, scheduled
+  brief, conversation rollover).
+
 ## Items considered but explicitly NOT planned
 
 These came up in discussion but were decided against (so we don't waste time revisiting):
