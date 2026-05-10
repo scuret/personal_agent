@@ -118,8 +118,8 @@ Each item lists what it adds, why it's not in yet, and what unblocks it.
 
 These aren't user-facing capabilities but improve daily use.
 
-- **Tighter morning brief / weekly review prompts** — audit found briefs sometimes run ~450 chars; could tighten to ~250 with prompt tweaks. Pure code. ~15 min.
-- **Tighter replies on very short user messages** — personality nudge so single-word follow-ups get one-word answers. Pure code. ~10 min.
+- ~~Tighter morning brief / weekly review prompts~~ — shipped (synthetic prompts now have explicit char budgets and "skip empty sections" rule).
+- ~~Tighter replies on very short user messages~~ — shipped (personality.md now requires one-word replies to one-word inputs).
 - ~~Audit-log analytics tool~~ — shipped as `tools/analytics.py`.
 - ~~"Query archive" tool~~ — shipped as the `archive` sub-agent.
 - ~~Recurring reminders~~ — shipped (`remind_recurring` tool with daily / weekdays / weekly / monthly patterns).
