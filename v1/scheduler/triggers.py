@@ -59,6 +59,17 @@ from relay.imessage_relay import (  # noqa: E402
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "triggers.yaml"
 CONVERSATION_SOURCE = "scheduler"
 
+# Wake every 30s and check the wallclock. Short enough that we catch
+# fires within half a minute even after a Mac sleep + wake; long enough
+# to keep the daemon nearly idle between checks.
+TICK_SECONDS = 30
+
+# State keys for tracking when each trigger last fired. Looking these up
+# against the most recent scheduled time is how we detect "we should
+# have fired but didn't" (i.e. Mac slept through 07:30).
+def _last_fired_key(trigger_name: str) -> str:
+    return f"scheduler_last_fired_{trigger_name}"
+
 # Synthetic prompts keyed by trigger name. The agent's personality + tools
 # do the actual work — these prompts just frame the request.
 PROMPTS: dict[str, str] = {
@@ -114,6 +125,7 @@ def _parse_hhmm(s: str) -> dtime:
 
 
 def _next_morning_brief_fire(cfg: dict[str, Any], now_local: datetime) -> datetime | None:
+    """Next future fire — used by --check to show when the user can expect one."""
     if not cfg.get("enabled", False):
         return None
     fire_time = _parse_hhmm(cfg.get("time", "07:30"))
@@ -130,12 +142,12 @@ def _next_morning_brief_fire(cfg: dict[str, Any], now_local: datetime) -> dateti
 
 
 def _next_weekly_review_fire(cfg: dict[str, Any], now_local: datetime) -> datetime | None:
+    """Next future fire — used by --check to show when the user can expect one."""
     if not cfg.get("enabled", False):
         return None
     fire_time = _parse_hhmm(cfg.get("time", "20:00"))
     target_weekday = _DAY_NAME_TO_WEEKDAY.get(cfg.get("day", "sunday").lower(), 6)
 
-    # Days from today's weekday to the target weekday (1..7 forward).
     delta_days = (target_weekday - now_local.weekday()) % 7
     candidate = (now_local + timedelta(days=delta_days)).replace(
         hour=fire_time.hour, minute=fire_time.minute, second=0, microsecond=0
@@ -145,7 +157,55 @@ def _next_weekly_review_fire(cfg: dict[str, Any], now_local: datetime) -> dateti
     return candidate
 
 
+def _last_morning_brief_scheduled(cfg: dict[str, Any], now_local: datetime) -> datetime | None:
+    """Most recent moment in the past when this trigger SHOULD have fired.
+
+    Daemon compares this against the persisted "last fired" timestamp: if
+    last-fired is older than this, we missed a fire (Mac slept through it,
+    or the daemon was off) and should fire now to catch up.
+    """
+    if not cfg.get("enabled", False):
+        return None
+    fire_time = _parse_hhmm(cfg.get("time", "07:30"))
+    weekdays_only = bool(cfg.get("weekdays_only", False))
+
+    candidate = now_local.replace(
+        hour=fire_time.hour, minute=fire_time.minute, second=0, microsecond=0
+    )
+    if candidate > now_local:
+        candidate -= timedelta(days=1)
+    while weekdays_only and candidate.weekday() >= 5:
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def _last_weekly_review_scheduled(cfg: dict[str, Any], now_local: datetime) -> datetime | None:
+    """Most recent moment in the past when the weekly review SHOULD have fired."""
+    if not cfg.get("enabled", False):
+        return None
+    fire_time = _parse_hhmm(cfg.get("time", "20:00"))
+    target_weekday = _DAY_NAME_TO_WEEKDAY.get(cfg.get("day", "sunday").lower(), 6)
+
+    days_back = (now_local.weekday() - target_weekday) % 7
+    candidate = (now_local - timedelta(days=days_back)).replace(
+        hour=fire_time.hour, minute=fire_time.minute, second=0, microsecond=0
+    )
+    if candidate > now_local:
+        candidate -= timedelta(days=7)
+    return candidate
+
+
+# Triggers that the daemon checks every tick. Each entry pairs the
+# "compute most recent past scheduled time" function with the config
+# key in triggers.yaml.
+_DAEMON_TRIGGERS: list[tuple[str, Any, str]] = [
+    ("morning_brief", _last_morning_brief_scheduled, "morning_brief"),
+    ("weekly_review", _last_weekly_review_scheduled, "weekly_review"),
+]
+
+
 def _compute_next_fires(now_local: datetime, config: dict[str, Any]) -> list[tuple[str, datetime]]:
+    """For diagnostics: upcoming fire times so --check can show them."""
     fires: list[tuple[str, datetime]] = []
     sched = config.get("scheduled", {})
     if (mb := _next_morning_brief_fire(sched.get("morning_brief", {}), now_local)) is not None:
@@ -210,39 +270,67 @@ async def _fire_trigger(trigger_name: str) -> None:
 
 
 async def _run_daemon() -> None:
+    """Wallclock-based scheduler loop.
+
+    Wakes every TICK_SECONDS, compares wallclock to the most recent past
+    scheduled time of each trigger, and fires any whose last-fired
+    timestamp predates that scheduled moment. This pattern survives macOS
+    sleep: when the Mac wakes up, the next tick observes that 07:30 has
+    passed without firing and catches up immediately.
+
+    On the very first run (no last-fired record exists), we prime the
+    timestamps to "now" so we don't immediately fire stale briefs at
+    install time. Use `--run-now <trigger>` to manually fire a missed
+    one if you want it.
+    """
     config = _load_config()
     tz = _user_tz()
+    store = MemoryStore()
 
-    print(f"scheduler started (tz={tz.zone}). ctrl-c to stop.")
+    print(f"scheduler started (tz={tz.zone}, tick every {TICK_SECONDS}s). ctrl-c to stop.")
+
+    # Prime first-run timestamps so we don't accidentally fire stale
+    # briefs the first time the daemon ever starts on a machine.
+    now = datetime.now(tz)
+    for name, _, _ in _DAEMON_TRIGGERS:
+        if store.get_state(_last_fired_key(name)) is None:
+            store.set_state(_last_fired_key(name), now.isoformat())
+            print(f"[primed] {name}: first-run baseline = {now.isoformat()}")
+
+    # Show the upcoming fire times once at startup so the log is readable.
+    for name, t in _compute_next_fires(now, config):
+        delta = t - now
+        print(f"upcoming {name}: {t.strftime('%Y-%m-%d %H:%M %Z')} (in {delta})")
 
     while True:
-        now_local = datetime.now(tz)
-        fires = _compute_next_fires(now_local, config)
-        if not fires:
-            # Nothing enabled — sleep an hour and re-check (in case the
-            # config gets edited and we re-read it on the next pass).
-            print("[scheduler] no enabled triggers; sleeping 1h")
-            await asyncio.sleep(3600)
-            config = _load_config()
-            continue
+        now = datetime.now(tz)
+        sched_cfg = config.get("scheduled", {})
 
-        next_name, next_time = fires[0]
-        wait_seconds = (next_time - now_local).total_seconds()
-        wait_seconds = max(wait_seconds, 1.0)  # never busy-loop
-        print(
-            f"next fire: {next_name} at {next_time.strftime('%Y-%m-%d %H:%M %Z')} "
-            f"(in {wait_seconds:.0f}s)"
-        )
-        await asyncio.sleep(wait_seconds)
+        for name, last_scheduled_fn, cfg_key in _DAEMON_TRIGGERS:
+            cfg = sched_cfg.get(cfg_key, {})
+            last_scheduled = last_scheduled_fn(cfg, now)
+            if last_scheduled is None:
+                continue
+            last_fired_str = store.get_state(_last_fired_key(name))
+            if not last_fired_str:
+                continue  # primed above; shouldn't happen
+            last_fired = datetime.fromisoformat(last_fired_str)
+            if last_fired >= last_scheduled:
+                continue  # already fired since last scheduled time
 
-        try:
-            await _fire_trigger(next_name)
-        except Exception as e:  # noqa: BLE001 — never let one bad fire kill the daemon
-            print(f"[fire error] {e}", file=sys.stderr)
+            # Missed fire — catch up.
+            delay = (now - last_scheduled).total_seconds()
+            print(f"[catchup] {name} missed by {delay:.0f}s — firing now")
+            try:
+                await _fire_trigger(name)
+                store.set_state(_last_fired_key(name), datetime.now(tz).isoformat())
+            except Exception as e:  # noqa: BLE001
+                print(f"[fire error] {name}: {e}", file=sys.stderr)
+                # Don't update last_fired on error — try again next tick.
 
-        # Re-read config after each fire so edits to triggers.yaml take
-        # effect on the next cycle without restarting the daemon.
+        # Re-read config so triggers.yaml edits take effect within ~30s.
         config = _load_config()
+        await asyncio.sleep(TICK_SECONDS)
 
 
 # ─── Diagnostics ─────────────────────────────────────────────────────────────
