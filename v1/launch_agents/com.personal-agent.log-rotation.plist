@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.personal-agent.log-rotation</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__V1_DIR__/.venv/bin/python</string>
+        <string>-u</string>
+        <string>-m</string>
+        <string>tools.rotate_logs</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__V1_DIR__</string>
+
+    <!-- Fire daily at 03:00 local time. If the Mac is asleep at 03:00,
+         launchd runs it as soon as the Mac next wakes (StartCalendarInterval
+         is already wallclock-aware, unlike asyncio.sleep). -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Run-once-per-fire — don't keep the process alive between fires. -->
+    <key>RunAtLoad</key>
+    <false/>
+    <key>KeepAlive</key>
+    <false/>
+
+    <!-- Where the rotation script's own output goes. We rotate THESE
+         too, since they're listed in tools/rotate_logs.py's LOG_NAMES…
+         actually no, they're a separate concern. Keep it simple: a tiny
+         status log that we don't rotate. The rotation script is quick
+         and writes only a few lines per run. -->
+    <key>StandardOutPath</key>
+    <string>__V1_DIR__/data/log-rotation.log</string>
+    <key>StandardErrorPath</key>
+    <string>__V1_DIR__/data/log-rotation.err.log</string>
+</dict>
+</plist>

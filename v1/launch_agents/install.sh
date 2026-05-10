@@ -23,7 +23,7 @@ mkdir -p "$LAUNCH_AGENTS_DIR"
 
 UID_DOMAIN="gui/$(id -u)"
 
-for label in com.personal-agent.relay com.personal-agent.scheduler; do
+for label in com.personal-agent.relay com.personal-agent.scheduler com.personal-agent.log-rotation; do
     src="$SCRIPT_DIR/${label}.plist"
     dst="$LAUNCH_AGENTS_DIR/${label}.plist"
 

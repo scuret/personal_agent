@@ -32,6 +32,7 @@ Run modes:
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from datetime import datetime, time as dtime, timedelta
@@ -269,6 +270,32 @@ async def _fire_trigger(trigger_name: str) -> None:
 # ─── Daemon ──────────────────────────────────────────────────────────────────
 
 
+def _most_recent_archive_fire(store: MemoryStore, trigger_name: str) -> datetime | None:
+    """Find the most recent time this trigger actually fired, from the archive.
+
+    Each fire opens a conversation with source='scheduler' and metadata
+    containing trigger=<name>. The conversation's started_at is when we
+    fired. Returns a UTC-aware datetime, or None if no fire is recorded.
+    """
+    rows = store._conn().execute(  # noqa: SLF001 — store has no public query
+        """SELECT started_at, metadata
+             FROM conversations
+            WHERE source = 'scheduler'
+         ORDER BY started_at DESC LIMIT 50""",
+    ).fetchall()
+    for r in rows:
+        try:
+            meta = json.loads(r["metadata"]) if r["metadata"] else {}
+        except json.JSONDecodeError:
+            continue
+        if meta.get("trigger") == trigger_name:
+            try:
+                return datetime.fromisoformat(r["started_at"])
+            except ValueError:
+                return None
+    return None
+
+
 async def _run_daemon() -> None:
     """Wallclock-based scheduler loop.
 
@@ -278,10 +305,15 @@ async def _run_daemon() -> None:
     sleep: when the Mac wakes up, the next tick observes that 07:30 has
     passed without firing and catches up immediately.
 
-    On the very first run (no last-fired record exists), we prime the
-    timestamps to "now" so we don't immediately fire stale briefs at
-    install time. Use `--run-now <trigger>` to manually fire a missed
-    one if you want it.
+    Startup priming logic:
+      * If we have a last-fired record, use it (catchup logic in the loop
+        will fire if a scheduled time has passed since).
+      * If no last-fired record exists but the archive shows a recent fire
+        (within 7 days), backfill last-fired from that — so a daemon
+        restart after the schema added the state KV doesn't lose history,
+        and a Mac that was off through a fire window catches up on wake.
+      * Otherwise (truly fresh install with no history), prime to "now"
+        so we don't fire stale briefs at install time.
     """
     config = _load_config()
     tz = _user_tz()
@@ -289,11 +321,17 @@ async def _run_daemon() -> None:
 
     print(f"scheduler started (tz={tz.zone}, tick every {TICK_SECONDS}s). ctrl-c to stop.")
 
-    # Prime first-run timestamps so we don't accidentally fire stale
-    # briefs the first time the daemon ever starts on a machine.
     now = datetime.now(tz)
     for name, _, _ in _DAEMON_TRIGGERS:
-        if store.get_state(_last_fired_key(name)) is None:
+        if store.get_state(_last_fired_key(name)) is not None:
+            continue  # already primed from a previous run
+        archive_fire = _most_recent_archive_fire(store, name)
+        if archive_fire is not None and (
+            (now - archive_fire.astimezone(tz)).total_seconds() < 7 * 86400
+        ):
+            store.set_state(_last_fired_key(name), archive_fire.isoformat())
+            print(f"[primed] {name}: backfill from archive = {archive_fire.isoformat()}")
+        else:
             store.set_state(_last_fired_key(name), now.isoformat())
             print(f"[primed] {name}: first-run baseline = {now.isoformat()}")
 
