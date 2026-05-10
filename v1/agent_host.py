@@ -48,6 +48,7 @@ from claude_agent_sdk.types import HookContext  # noqa: E402
 
 from memory.store import MemoryStore  # noqa: E402
 from mcp_servers.calendar_server import create_calendar_mcp_server  # noqa: E402
+from mcp_servers.github_server import create_github_mcp_server  # noqa: E402
 from mcp_servers.gmail_server import create_gmail_mcp_server  # noqa: E402
 from mcp_servers.memory_server import create_memory_mcp_server  # noqa: E402
 from mcp_servers.notion_server import create_notion_mcp_server  # noqa: E402
@@ -110,6 +111,17 @@ NOTION_TOOLS = [
     "mcp__notion__notion_append_text",
 ]
 
+GITHUB_TOOLS = [
+    "mcp__github__github_list_my_repos",
+    "mcp__github__github_get_repo",
+    "mcp__github__github_search_repos",
+    "mcp__github__github_list_issues",
+    "mcp__github__github_get_issue",
+    "mcp__github__github_list_prs",
+    "mcp__github__github_get_pr",
+    "mcp__github__github_create_issue",
+]
+
 
 # ─── Safety hooks ───────────────────────────────────────────────────────────
 #
@@ -157,12 +169,13 @@ def build_options(store: MemoryStore) -> ClaudeAgentOptions:
             "weather": create_weather_mcp_server(),
             "vision": create_vision_mcp_server(store),
             "notion": create_notion_mcp_server(),
+            "github": create_github_mcp_server(),
         },
         # Allowlist what tools the agent may call. Anything not listed here
         # is blocked.
         allowed_tools=(
             MEMORY_TOOLS + TODOIST_TOOLS + GMAIL_TOOLS + CALENDAR_TOOLS
-            + WEATHER_TOOLS + VISION_TOOLS + NOTION_TOOLS
+            + WEATHER_TOOLS + VISION_TOOLS + NOTION_TOOLS + GITHUB_TOOLS
         ),
         # Isolate the agent from the user's Claude Code environment:
         #   * `tools=[]` disables built-in CLI primitives (Bash, Read, Edit,
