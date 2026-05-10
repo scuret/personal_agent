@@ -400,16 +400,33 @@ def step_google_oauth(env: dict[str, str], enabled: set[str]) -> None:
         _err(f"OAuth flow failed: {e}")
 
 
-# ─── Step 4 — iMessage relay ────────────────────────────────────────────────
+# ─── Step 4 — Relay transport ───────────────────────────────────────────────
 
 
-def step_imessage(env: dict[str, str]) -> None:
-    _hr("4. iMessage relay")
-
-    if not _yn("Configure iMessage relay now?", default=True):
-        return
-
+def step_relay(env: dict[str, str]) -> None:
+    _hr("4. Relay transport")
+    print("Pick the messaging surface for talking to the agent:")
+    print("  imessage  — macOS only. Polls chat.db + sends via AppleScript.")
+    print("              Requires Full Disk Access + Automation permissions.")
+    print("  telegram  — Cross-platform. Bot via @BotFather, no Mac needed.")
     print()
+
+    current = env.get("RELAY_TRANSPORT", "imessage")
+    transport = _ask("RELAY_TRANSPORT [imessage/telegram]:", default=current)
+    if transport not in ("imessage", "telegram"):
+        _warn(f"unknown transport {transport!r}, keeping {current}")
+        transport = current
+    env["RELAY_TRANSPORT"] = transport
+
+    if transport == "imessage":
+        _step_imessage_config(env)
+    else:
+        _step_telegram_config(env)
+
+
+def _step_imessage_config(env: dict[str, str]) -> None:
+    print()
+    print("─ iMessage config ─")
     print("Mode:")
     print("  self    — listen to your OWN iMessages in note-to-self chats")
     print("            (you text yourself from your iPhone, the agent replies)")
@@ -435,7 +452,6 @@ def step_imessage(env: dict[str, str]) -> None:
     if mode == "self":
         print()
         print("Optional: extra self handles (e.g. your Apple ID email) to also watch.")
-        print("Comma-separated. Example: you@icloud.com")
         env["SELF_HANDLES"] = _ask(
             "SELF_HANDLES:", default=env.get("SELF_HANDLES", "")
         )
@@ -444,9 +460,45 @@ def step_imessage(env: dict[str, str]) -> None:
     print("Reminder: macOS launchd-spawned processes need their own permissions.")
     print("After install, grant:")
     print("  • Full Disk Access → for the venv's Python binary")
-    print("    (System Settings → Privacy & Security → Full Disk Access)")
     print("  • Automation → Messages → for the same Python binary")
-    print("    (granted on first AppleScript send attempt)")
+
+
+def _step_telegram_config(env: dict[str, str]) -> None:
+    print()
+    print("─ Telegram config ─")
+    print("Step 1: create the bot")
+    print("  Open Telegram, search for @BotFather, send /newbot.")
+    print("  Pick a display name and a username (must end in `bot`).")
+    print("  BotFather replies with a token like '123456:ABC-DEF...'.")
+    print()
+    env["TELEGRAM_BOT_TOKEN"] = _ask(
+        "TELEGRAM_BOT_TOKEN:", default=env.get("TELEGRAM_BOT_TOKEN", "")
+    )
+
+    print()
+    print("Step 2: find your Telegram user id")
+    print("  Search @userinfobot in Telegram, start it, copy the numeric id")
+    print("  it replies with. The bot will ignore anyone NOT in this list.")
+    print("  Comma-separated for multiple users.")
+    env["TELEGRAM_ALLOWED_USER_IDS"] = _ask(
+        "TELEGRAM_ALLOWED_USER_IDS:",
+        default=env.get("TELEGRAM_ALLOWED_USER_IDS", ""),
+    )
+
+    print()
+    print("Optional: chat_id for scheduled briefs/reminders. Leave empty")
+    print("to default to the first allowed user id.")
+    env["TELEGRAM_BRIEF_CHAT_ID"] = _ask(
+        "TELEGRAM_BRIEF_CHAT_ID:",
+        default=env.get("TELEGRAM_BRIEF_CHAT_ID", ""),
+    )
+
+    print()
+    print("Step 3: in Telegram, send /start to your bot from your phone so")
+    print("        Telegram authorizes the bot to send messages back to you.")
+    print()
+    print("After install, you can verify with:")
+    print("  python -m relay.telegram_relay --check")
 
 
 # ─── Step 5 — Behavior defaults ─────────────────────────────────────────────
@@ -524,7 +576,7 @@ def main() -> None:
     step_required(env)
     enabled = step_subagents(env)
     step_google_oauth(env, enabled)
-    step_imessage(env)
+    step_relay(env)
     step_behavior(env)
     _write_env(env)
     print()

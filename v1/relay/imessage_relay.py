@@ -188,6 +188,26 @@ def _self_handles() -> list[str]:
     return [h for h in handles if h]
 
 
+def _resolve_send_handle() -> str:
+    """Where outgoing iMessages get sent.
+
+    Used by both the relay's reply path and (via relay.sender) the
+    scheduler's brief / reminder send path.
+      * self mode  → the principal's first self-handle
+      * contact mode → TARGET_PHONE_NUMBER
+    """
+    mode = os.environ.get("IMESSAGE_MODE", MODE_CONTACT).strip().lower()
+    if mode == MODE_SELF:
+        handles = _self_handles()
+        if not handles:
+            raise RuntimeError("IMESSAGE_MODE=self but no TARGET_PHONE_NUMBER set")
+        return handles[0]
+    target = os.environ.get("TARGET_PHONE_NUMBER", "").strip()
+    if not target:
+        raise RuntimeError("TARGET_PHONE_NUMBER not set")
+    return target
+
+
 # ─── Reading from chat.db ────────────────────────────────────────────────────
 
 

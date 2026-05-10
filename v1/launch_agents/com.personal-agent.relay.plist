@@ -13,7 +13,10 @@
              (which it never does, in a long-running daemon). -->
         <string>-u</string>
         <string>-m</string>
-        <string>relay.imessage_relay</string>
+        <!-- relay.run dispatches to imessage or telegram based on the
+             RELAY_TRANSPORT env var in .env. Switching transports is a
+             .env change + daemon restart, no plist edit needed. -->
+        <string>relay.run</string>
     </array>
 
     <key>WorkingDirectory</key>

@@ -1,8 +1,17 @@
 # Personal Agent — v1
 
-A personal AI agent that runs locally on your Mac, talks to you over iMessage, and helps with email, tasks, calendar, files, search, and more.
+A personal AI agent that runs as a daemon on your computer, talks to you over **iMessage** or **Telegram** (your choice at install time), and helps with email, tasks, calendar, files, search, and more.
 
 This directory holds the v1 implementation. The historical design spec is in `../pre_requirements.md` (kept for reference; many decisions diverge from it).
+
+## Choosing a transport
+
+Set `RELAY_TRANSPORT` in `.env` to either:
+
+- **`imessage`** — macOS-only. Polls `~/Library/Messages/chat.db` and sends via AppleScript. Requires Full Disk Access + Automation permissions for the daemon. Native iPhone integration; the agent appears as a "Note to Self" thread (or a regular contact in `contact` mode).
+- **`telegram`** — Cross-platform. The agent runs as a bot you create via `@BotFather`; only allowlisted Telegram user IDs can talk to it. Works from any Mac, Linux, or Windows host with Python — no iMessage / chat.db dependency, and no iOS Focus / DND quirks.
+
+Switch transports any time by editing `.env` and restarting the relay (`launchctl kickstart -k gui/$(id -u)/com.personal-agent.relay`). Only one runs at a time. The interactive installer (`./install.sh`) walks you through choosing one.
 
 ---
 
@@ -149,10 +158,11 @@ who'd rather do it piece by piece.
 
 ### Prerequisites
 
-- macOS (for chat.db + AppleScript + sips)
-- Python 3.11+
-- `uv` recommended (`brew install uv`)
-- An always-on Mac (won't sleep) for the relay daemon
+- Python 3.11+ (any OS for Telegram transport; macOS specifically for iMessage transport)
+- `uv` recommended (`brew install uv` on macOS, or via your distro on Linux)
+- An always-on host for the relay daemon (Mac or any Linux server for Telegram)
+- For **iMessage transport** specifically: macOS (chat.db + AppleScript + sips for HEIC conversion)
+- For **Telegram transport**: a bot created via `@BotFather` (5-minute web setup; covered by the installer)
 
 ### 1. Install Python dependencies
 

@@ -50,12 +50,7 @@ from claude_agent_sdk import ClaudeSDKClient  # noqa: E402
 
 from agent_host import build_options, process_turn  # noqa: E402
 from memory.store import MemoryStore  # noqa: E402
-from relay.imessage_relay import (  # noqa: E402
-    MODE_CONTACT,
-    MODE_SELF,
-    ChatSender,
-    _self_handles,
-)
+from relay.sender import make_sender  # noqa: E402
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "triggers.yaml"
 CONVERSATION_SOURCE = "scheduler"
@@ -220,20 +215,6 @@ def _compute_next_fires(now_local: datetime, config: dict[str, Any]) -> list[tup
 # ─── Sending ─────────────────────────────────────────────────────────────────
 
 
-def _resolve_send_handle() -> str:
-    """The destination for scheduler iMessages — same handle the relay uses."""
-    mode = os.environ.get("IMESSAGE_MODE", MODE_CONTACT).strip().lower()
-    if mode == MODE_SELF:
-        handles = _self_handles()
-        if not handles:
-            raise RuntimeError("IMESSAGE_MODE=self but no TARGET_PHONE_NUMBER set")
-        return handles[0]
-    target = os.environ.get("TARGET_PHONE_NUMBER", "").strip()
-    if not target:
-        raise RuntimeError("TARGET_PHONE_NUMBER not set")
-    return target
-
-
 def _fire_due_reminders(store: MemoryStore) -> None:
     """Send any pending reminder whose fire_at has passed.
 
@@ -242,13 +223,14 @@ def _fire_due_reminders(store: MemoryStore) -> None:
     schedules them via mcp__reminders__remind.
 
     On send error, we leave the reminder in pending state so the next
-    tick retries. Only mark fired after the AppleScript send succeeds.
+    tick retries. Sender is transport-agnostic — `make_sender()` returns
+    an iMessage or Telegram sender depending on RELAY_TRANSPORT.
     """
     now_iso = datetime.now(timezone.utc).isoformat()
     due = store.get_due_reminders(before_iso=now_iso)
     if not due:
         return
-    sender = ChatSender(_resolve_send_handle())
+    sender = make_sender()
     for r in due:
         ok, err = sender.send(r["message"])
         if ok:
@@ -259,14 +241,18 @@ def _fire_due_reminders(store: MemoryStore) -> None:
 
 
 async def _fire_trigger(trigger_name: str) -> None:
-    """Generate the brief and send it via iMessage. One conversation per fire."""
+    """Generate the brief and send it via the active transport.
+
+    `make_sender()` picks iMessage or Telegram based on RELAY_TRANSPORT.
+    One conversation row per fire.
+    """
     prompt = PROMPTS.get(trigger_name)
     if not prompt:
         print(f"[fire] unknown trigger: {trigger_name}", file=sys.stderr)
         return
 
     store = MemoryStore()
-    sender = ChatSender(_resolve_send_handle())
+    sender = make_sender()
     options = build_options(store)
 
     conversation_id = store.open_conversation(
@@ -412,9 +398,15 @@ def _check() -> int:
         return 1
     print("✓ ANTHROPIC_API_KEY set")
 
+    from relay.sender import current_transport
+
+    transport = current_transport()
+    print(f"✓ transport: {transport}")
     try:
-        send_handle = _resolve_send_handle()
-        print(f"✓ destination handle: {send_handle}")
+        sender = make_sender()
+        # Probe the destination identifier without actually sending.
+        dest = getattr(sender, "target_handle", None) or getattr(sender, "chat_id", None)
+        print(f"✓ destination: {dest}")
     except RuntimeError as e:
         print(f"✗ {e}")
         return 1
