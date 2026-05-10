@@ -138,6 +138,7 @@ These aren't user-facing capabilities but improve daily use.
 
 - ~~Tighter morning brief / weekly review prompts~~ — shipped (synthetic prompts now have explicit char budgets and "skip empty sections" rule).
 - ~~Tighter replies on very short user messages~~ — shipped (personality.md now requires one-word replies to one-word inputs).
+- **Drop markdown bold (`**...**`) from agent output** — iMessage doesn't render markdown; the asterisks show up as literal characters in the bubble, which looks ugly. Telegram doesn't render them either with our current send path (we use `sendMessage` without `parse_mode`). Update `config/personality.md` to remove the `**bold**` headers convention; update `scheduler/triggers.py` synthetic prompts that reference bold. Replace structured-section headers with plain-text alternatives — line breaks, emoji prefixes (📅 for calendar, ✅ for tasks, 📧 for email), ALL-CAPS line headers, or dashes for items. Pure code. ~10 min.
 - ~~Audit-log analytics tool~~ — shipped as `tools/analytics.py`.
 - ~~"Query archive" tool~~ — shipped as the `archive` sub-agent.
 - ~~Recurring reminders~~ — shipped (`remind_recurring` tool with daily / weekdays / weekly / monthly patterns).
