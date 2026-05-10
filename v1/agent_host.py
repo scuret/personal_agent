@@ -48,6 +48,7 @@ from claude_agent_sdk.types import HookContext  # noqa: E402
 
 from memory.store import MemoryStore  # noqa: E402
 from mcp_servers.calendar_server import create_calendar_mcp_server  # noqa: E402
+from mcp_servers.dropbox_server import create_dropbox_mcp_server  # noqa: E402
 from mcp_servers.github_server import create_github_mcp_server  # noqa: E402
 from mcp_servers.gmail_server import create_gmail_mcp_server  # noqa: E402
 from mcp_servers.memory_server import create_memory_mcp_server  # noqa: E402
@@ -57,6 +58,7 @@ from mcp_servers.todoist_server import create_todoist_mcp_server  # noqa: E402
 from mcp_servers.vision_server import create_vision_mcp_server  # noqa: E402
 from mcp_servers.weather_server import create_weather_mcp_server  # noqa: E402
 from mcp_servers.web_server import create_web_mcp_server  # noqa: E402
+from mcp_servers.youtube_server import create_youtube_mcp_server  # noqa: E402
 from system_prompt import build_system_prompt  # noqa: E402
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
@@ -135,6 +137,21 @@ REMINDER_TOOLS = [
     "mcp__reminders__cancel_reminder",
 ]
 
+YOUTUBE_TOOLS = [
+    "mcp__youtube__youtube_search",
+    "mcp__youtube__youtube_get_video",
+    "mcp__youtube__youtube_get_channel",
+    "mcp__youtube__youtube_list_channel_uploads",
+]
+
+DROPBOX_TOOLS = [
+    "mcp__dropbox__dropbox_search",
+    "mcp__dropbox__dropbox_list_folder",
+    "mcp__dropbox__dropbox_get_metadata",
+    "mcp__dropbox__dropbox_download_text",
+    "mcp__dropbox__dropbox_create_share_link",
+]
+
 
 # ─── Safety hooks ───────────────────────────────────────────────────────────
 #
@@ -185,13 +202,15 @@ def build_options(store: MemoryStore) -> ClaudeAgentOptions:
             "github": create_github_mcp_server(),
             "web": create_web_mcp_server(),
             "reminders": create_reminders_mcp_server(store),
+            "youtube": create_youtube_mcp_server(),
+            "dropbox": create_dropbox_mcp_server(),
         },
         # Allowlist what tools the agent may call. Anything not listed here
         # is blocked.
         allowed_tools=(
             MEMORY_TOOLS + TODOIST_TOOLS + GMAIL_TOOLS + CALENDAR_TOOLS
             + WEATHER_TOOLS + VISION_TOOLS + NOTION_TOOLS + GITHUB_TOOLS
-            + WEB_TOOLS + REMINDER_TOOLS
+            + WEB_TOOLS + REMINDER_TOOLS + YOUTUBE_TOOLS + DROPBOX_TOOLS
         ),
         # Isolate the agent from the user's Claude Code environment:
         #   * `tools=[]` disables built-in CLI primitives (Bash, Read, Edit,
