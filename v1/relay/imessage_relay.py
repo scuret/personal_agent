@@ -144,6 +144,36 @@ def _resolve_text(row: sqlite3.Row) -> str:
     return ""
 
 
+# iMessage uses U+FFFC (object replacement character) as an inline
+# placeholder where an attachment sits in the text. We strip it before
+# sending to the agent — actual attachment paths are surfaced separately
+# via the [attachment: ...] marker block.
+_OBJ_REPLACEMENT = "￼"
+
+
+def _format_message_for_agent(text: str, attachments: list[dict[str, str]]) -> str:
+    """Render the user's iMessage as the string we feed to the agent.
+
+    If the message has image attachments, a marker block is prepended:
+
+        [attachment: image at /path/to/file.jpg (image/jpeg)]
+        [attachment: image at /path/to/file2.heic (image/heic)]
+        <user's caption text, or "(no caption)" if empty>
+
+    The agent's personality prompt explains this convention and tells
+    it to call mcp__vision__analyze_image with the path.
+    """
+    cleaned = (text or "").replace(_OBJ_REPLACEMENT, "").strip()
+    if not attachments:
+        return cleaned
+
+    lines = [
+        f"[attachment: image at {a['path']} ({a['mime']})]" for a in attachments
+    ]
+    body = cleaned if cleaned else "(no caption)"
+    return "\n".join(lines) + "\n" + body
+
+
 def _self_handles() -> list[str]:
     """Resolve the list of "self handles" used in self-mode.
 
@@ -195,6 +225,34 @@ class ChatReader:
         conn.row_factory = sqlite3.Row
         return conn
 
+    def _image_attachments_for(self, message_rowid: int) -> list[dict[str, str]]:
+        """Return [{path, mime}] for image attachments on a message.
+
+        Only image MIME types are returned; videos/PDFs/other binary types
+        are filtered out (vision tool only handles images, and surfacing
+        non-image paths to the agent would just confuse it).
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT a.filename, a.mime_type
+                     FROM attachment a
+                     JOIN message_attachment_join maj ON maj.attachment_id = a.ROWID
+                    WHERE maj.message_id = ?
+                      AND a.mime_type LIKE 'image/%'
+                      AND a.filename IS NOT NULL""",
+                (message_rowid,),
+            ).fetchall()
+        # Expand `~/` paths so the vision tool gets a usable absolute path.
+        # Filter out files that don't exist (transfer might still be in-flight
+        # — we'd rather skip than feed the agent a broken path).
+        from os.path import expanduser
+        results = []
+        for r in rows:
+            path = expanduser(r["filename"])
+            if Path(path).is_file():
+                results.append({"path": path, "mime": r["mime_type"]})
+        return results
+
     def can_read(self) -> tuple[bool, str]:
         """Diagnostic: is chat.db readable? Returns (ok, reason_if_not)."""
         try:
@@ -240,15 +298,17 @@ class ChatReader:
         for r in rows:
             max_rowid = max(max_rowid, int(r["rowid"]))
             text = _resolve_text(r)
-            if not text.strip():
-                # Truly empty even after attributedBody fallback: image-
-                # only sends, tap-back reactions, Apple pseudo-rows.
+            attachments = self._image_attachments_for(int(r["rowid"]))
+            # Image-only messages have empty text but non-empty attachments;
+            # we still want to process those (the agent should describe them).
+            if not text.strip() and not attachments:
                 print(
                     f"[skipped: empty text from {r['sender']} (rowid={r['rowid']})]",
                     flush=True,
                 )
                 continue
-            result.append(self._row_to_dict(r, text))
+            final = _format_message_for_agent(text, attachments)
+            result.append(self._row_to_dict(r, final))
         return result, max_rowid
 
     def _fetch_self(
@@ -284,13 +344,17 @@ class ChatReader:
             text = _resolve_text(r)
             if text.startswith(OUTGOING_MARKER):
                 continue
-            if not text.strip():
+            attachments = self._image_attachments_for(int(r["rowid"]))
+            # Image-only messages have empty text but non-empty attachments;
+            # we still want to process those.
+            if not text.strip() and not attachments:
                 print(
                     f"[skipped: empty text in chat={r['sender']} (rowid={r['rowid']})]",
                     flush=True,
                 )
                 continue
-            result.append(self._row_to_dict(r, text))
+            final = _format_message_for_agent(text, attachments)
+            result.append(self._row_to_dict(r, final))
         return result, max_rowid
 
     @staticmethod
