@@ -14,6 +14,8 @@ data/*.sqlite-shm
 data/*.sqlite-wal
 data/*.db
 data/*.log
+# rotated log backups from tools/rotate_logs.py — they have date suffixes
+data/*.log.*
 
 # Python
 __pycache__/
