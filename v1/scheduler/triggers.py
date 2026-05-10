@@ -35,7 +35,7 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime, time as dtime, timedelta
+from datetime import datetime, time as dtime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -234,6 +234,30 @@ def _resolve_send_handle() -> str:
     return target
 
 
+def _fire_due_reminders(store: MemoryStore) -> None:
+    """Send any pending reminder whose fire_at has passed.
+
+    Runs on every scheduler tick. Reminders are stored with ISO 8601 +
+    offset, so we compare against UTC-now in ISO form. The agent
+    schedules them via mcp__reminders__remind.
+
+    On send error, we leave the reminder in pending state so the next
+    tick retries. Only mark fired after the AppleScript send succeeds.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    due = store.get_due_reminders(before_iso=now_iso)
+    if not due:
+        return
+    sender = ChatSender(_resolve_send_handle())
+    for r in due:
+        ok, err = sender.send(r["message"])
+        if ok:
+            store.mark_reminder_fired(r["id"])
+            print(f"[reminder fired] #{r['id']}: {r['message'][:80]}")
+        else:
+            print(f"[reminder send failed] #{r['id']}: {err}", file=sys.stderr)
+
+
 async def _fire_trigger(trigger_name: str) -> None:
     """Generate the brief and send it via iMessage. One conversation per fire."""
     prompt = PROMPTS.get(trigger_name)
@@ -365,6 +389,13 @@ async def _run_daemon() -> None:
             except Exception as e:  # noqa: BLE001
                 print(f"[fire error] {name}: {e}", file=sys.stderr)
                 # Don't update last_fired on error — try again next tick.
+
+        # Fire any one-off reminders the agent has scheduled. Independent
+        # of the static morning_brief / weekly_review checks above.
+        try:
+            _fire_due_reminders(store)
+        except Exception as e:  # noqa: BLE001
+            print(f"[reminders error] {e}", file=sys.stderr)
 
         # Re-read config so triggers.yaml edits take effect within ~30s.
         config = _load_config()
