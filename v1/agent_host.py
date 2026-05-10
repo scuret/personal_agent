@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -168,6 +169,38 @@ REDDIT_TOOLS = [
 ]
 
 
+# ─── Sub-agent enablement ───────────────────────────────────────────────────
+#
+# Each sub-agent is registered only when its required configuration is
+# present. Lets the install script control capability surface: if the
+# user didn't configure a Notion token, Notion isn't registered, the
+# agent doesn't see those tools at all, no wasted system-prompt tokens,
+# no "tool failed" surprises at call-time.
+#
+# Always-on agents (memory, weather, vision, wikipedia, reddit, reminders)
+# need no auth beyond ANTHROPIC_API_KEY (which is required for the whole
+# app), so they're always registered.
+
+
+def _has_env(*names: str) -> bool:
+    """True iff every named env var is set + non-empty."""
+    return all(bool((os.environ.get(n) or "").strip()) for n in names)
+
+
+def _has_google_oauth() -> bool:
+    """True iff a Google OAuth client JSON is present.
+
+    We don't require the cached token pickle here — if it's missing,
+    the first tool call triggers the OAuth flow (which works in dev/CLI
+    but not under launchd; install.sh handles the dance up-front).
+    """
+    creds_raw = os.environ.get("GOOGLE_OAUTH_CREDENTIALS_PATH", "./config/credentials.json")
+    creds_path = Path(creds_raw)
+    if not creds_path.is_absolute():
+        creds_path = Path(__file__).parent / creds_path
+    return creds_path.exists()
+
+
 # ─── Safety hooks ───────────────────────────────────────────────────────────
 #
 # Belt-and-suspenders: even though we never expose a send-shaped tool, this
@@ -198,38 +231,47 @@ async def _block_send_tools(
 
 
 def build_options(store: MemoryStore) -> ClaudeAgentOptions:
+    # Sub-agent registration table. Each entry: (name, factory, tool list,
+    # is_enabled callable). Filtered by enablement — only configured
+    # integrations register, so unused tools don't bloat the system prompt
+    # and the agent never tries to call something that'd fail.
+    candidates: list[tuple[str, Any, list[str], Any]] = [
+        ("memory",    lambda: create_memory_mcp_server(store),     MEMORY_TOOLS,    lambda: True),
+        ("weather",   lambda: create_weather_mcp_server(),         WEATHER_TOOLS,   lambda: True),
+        ("vision",    lambda: create_vision_mcp_server(store),     VISION_TOOLS,    lambda: True),
+        ("wikipedia", lambda: create_wikipedia_mcp_server(),       WIKIPEDIA_TOOLS, lambda: True),
+        ("reddit",    lambda: create_reddit_mcp_server(),          REDDIT_TOOLS,    lambda: True),
+        ("reminders", lambda: create_reminders_mcp_server(store),  REMINDER_TOOLS,  lambda: True),
+        ("todoist",   lambda: create_todoist_mcp_server(),         TODOIST_TOOLS,   lambda: _has_env("TODOIST_API_KEY")),
+        ("gmail",     lambda: create_gmail_mcp_server(),           GMAIL_TOOLS,     _has_google_oauth),
+        ("calendar",  lambda: create_calendar_mcp_server(),        CALENDAR_TOOLS,  _has_google_oauth),
+        ("notion",    lambda: create_notion_mcp_server(),          NOTION_TOOLS,    lambda: _has_env("NOTION_INTEGRATION_TOKEN")),
+        ("github",    lambda: create_github_mcp_server(),          GITHUB_TOOLS,    lambda: _has_env("GITHUB_TOKEN")),
+        ("web",       lambda: create_web_mcp_server(),             WEB_TOOLS,       lambda: _has_env("BRAVE_SEARCH_API_KEY")),
+        ("youtube",   lambda: create_youtube_mcp_server(),         YOUTUBE_TOOLS,   lambda: _has_env("YOUTUBE_API_KEY")),
+        ("dropbox",   lambda: create_dropbox_mcp_server(),         DROPBOX_TOOLS,   lambda: _has_env("DROPBOX_ACCESS_TOKEN")),
+    ]
+
+    mcp_servers: dict[str, Any] = {}
+    allowed_tools: list[str] = []
+    enabled_names: list[str] = []
+    for name, factory, tools, is_enabled in candidates:
+        if is_enabled():
+            mcp_servers[name] = factory()
+            allowed_tools.extend(tools)
+            enabled_names.append(name)
+
+    print(f"[agent_host] enabled sub-agents: {', '.join(enabled_names)}", flush=True)
+
     return ClaudeAgentOptions(
         # Personality + runtime context + injected facts.
         system_prompt=build_system_prompt(store),
         # Pin the model so behavior is reproducible. Override via env var.
         model=os.environ.get("CLAUDE_MODEL", DEFAULT_MODEL),
-        # In-process MCP servers — no subprocess overhead. The memory
-        # factory closes over `store` so its tools share the same SQLite
-        # handle the agent_host uses for archive/audit writes.
-        mcp_servers={
-            "memory": create_memory_mcp_server(store),
-            "todoist": create_todoist_mcp_server(),
-            "gmail": create_gmail_mcp_server(),
-            "calendar": create_calendar_mcp_server(),
-            "weather": create_weather_mcp_server(),
-            "vision": create_vision_mcp_server(store),
-            "notion": create_notion_mcp_server(),
-            "github": create_github_mcp_server(),
-            "web": create_web_mcp_server(),
-            "reminders": create_reminders_mcp_server(store),
-            "youtube": create_youtube_mcp_server(),
-            "dropbox": create_dropbox_mcp_server(),
-            "wikipedia": create_wikipedia_mcp_server(),
-            "reddit": create_reddit_mcp_server(),
-        },
+        mcp_servers=mcp_servers,
         # Allowlist what tools the agent may call. Anything not listed here
         # is blocked.
-        allowed_tools=(
-            MEMORY_TOOLS + TODOIST_TOOLS + GMAIL_TOOLS + CALENDAR_TOOLS
-            + WEATHER_TOOLS + VISION_TOOLS + NOTION_TOOLS + GITHUB_TOOLS
-            + WEB_TOOLS + REMINDER_TOOLS + YOUTUBE_TOOLS + DROPBOX_TOOLS
-            + WIKIPEDIA_TOOLS + REDDIT_TOOLS
-        ),
+        allowed_tools=allowed_tools,
         # Isolate the agent from the user's Claude Code environment:
         #   * `tools=[]` disables built-in CLI primitives (Bash, Read, Edit,
         #     ToolSearch, etc.). The agent runs ONLY our MCP-defined tools.

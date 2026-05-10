@@ -120,6 +120,32 @@ v1/
 
 ## Setup
 
+### Quick start (recommended)
+
+For a guided setup that walks through everything — venv + deps + sub-agent selection + API keys + Google OAuth + iMessage relay + LaunchAgents — run:
+
+```bash
+cd v1
+./install.sh
+```
+
+The installer is **idempotent** — re-run anytime to add new sub-agents,
+update keys, or reconfigure parts. Existing values are preserved unless
+you explicitly change them.
+
+It also handles **migration**: if you point it at another machine's `v1/`
+directory at the start, it'll copy `.env`, `config/credentials.json`,
+the cached Google OAuth token, and your `data/memory.sqlite` archive
+over so you don't lose history when moving servers.
+
+```bash
+./install.sh --skip-deps       # reuse existing venv, just re-configure
+./install.sh --help
+```
+
+The rest of this section explains the same steps manually for anyone
+who'd rather do it piece by piece.
+
 ### Prerequisites
 
 - macOS (for chat.db + AppleScript + sips)
