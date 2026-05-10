@@ -6,7 +6,23 @@ What's shipped, what's planned, and what each planned item needs to actually lan
 
 15 sub-agents currently live: **memory, archive (aggregate analytics), todoist, gmail, calendar (read), weather, vision, notion, github, web (Brave search + URL fetch), youtube, dropbox, wikipedia, reddit (public read), reminders.**
 
-Plus operational tooling: cost dashboard, log rotation, scheduler missed-fire catchup, token-health CLI, audit log of every Anthropic API event, iMessage relay (contact + self mode), morning-brief / Sunday-review scheduler, LaunchAgent auto-start.
+Plus operational tooling and infrastructure:
+- iMessage relay (contact + self mode, attributedBody decoder for DND-suppressed messages)
+- Telegram relay (alternative transport, allowlisted user IDs, image-attachment support)
+- Pluggable transport via `RELAY_TRANSPORT` + `relay/run.py` dispatcher
+- Recurring reminders (daily / weekdays / weekly / monthly)
+- Rules-based email-watch trigger (sender allowlist + urgency keywords, polled every N minutes)
+- Morning brief + Sunday weekly review scheduler with wallclock-based catchup (survives Mac sleep)
+- Cost dashboard (`tools/cost_report.py`)
+- Behavioral analytics (`tools/analytics.py`)
+- Token health check (`tools/token_health.py`)
+- Daily log rotation (`tools/rotate_logs.py` + LaunchAgent)
+- Interactive installer (`./install.sh` → `tools/install.py`) with sub-agent selection, key prompts, Google OAuth flow, transport choice, triggers config, LaunchAgent install, and migration from another machine
+- LaunchAgent auto-start for relay + scheduler + log-rotation
+- Audit log of every Anthropic API event (privacy invariant)
+- Dynamic sub-agent registration (only configured ones load)
+- Send-block PreToolUse hook + isolation knobs (`tools=[]` + `strict_mcp_config=True`)
+- Key-rotation + handling-discipline guidance (README + .env.example banner)
 
 ## Planned
 
@@ -77,6 +93,13 @@ Each item lists what it adds, why it's not in yet, and what unblocks it.
 - **Unblocks:** App registration + OAuth at the Mac. Even then, expect a small surface area.
 - **NOT remote-buildable.**
 - **Effort:** ~hour, but with a known low ceiling on what it can actually do.
+
+### LLM-classified email watch
+- **What:** Layer a Haiku-based classifier on top of the existing rules-based email watch. After the rules pass (sender allowlist + urgency keywords), any remaining new unread emails get a single short Haiku call: "is this urgent or does it require a direct personal response?" → if yes, included in the same notification batch. Catches contextual urgency that pure keyword/sender matching misses ("Hey can you call me when you get a chance" from a friend, etc.).
+- **Why deferred:** The rules-only version (commit `3fc4584` + `bd1168a`) is in production today. We agreed to ship that first and only layer the LLM tier if the rules-only false-negative rate proves too high in real use. Wait for a few weeks of usage data before deciding.
+- **Unblocks:** Pure code on top of the existing `_fire_email_watch` in `scheduler/triggers.py`. No new auth — uses the existing `ANTHROPIC_API_KEY`. **Remote-buildable.**
+- **Cost:** Haiku at ~$1/M input tokens; ~50 unread emails/day × ~200 tokens each = ~$0.01/day.
+- **Effort:** ~hour (classifier function + prompt + integration with the rules-pass-through, plus rate-limiting so a flurry of "yes" classifications batches into one notification not N pings).
 
 ### Group chat support in the iMessage relay
 - **What:** Let you @-mention the agent in a family / work group iMessage thread (instead of only watching note-to-self chats), with a whitelist of allowed group chats and explicit @-mention triggering so the agent doesn't respond to every message in a group.
