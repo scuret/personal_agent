@@ -264,6 +264,8 @@ Edit `config/triggers.yaml` — schedules, important-sender allowlist, urgency k
 
 ## Privacy + secrets
 
+### What's protected
+
 - All API tokens / keys live in `.env` (gitignored — see `.gitignore`).
 - The OAuth client JSON lives in `config/credentials.json` (gitignored).
 - The cached OAuth token lives in `data/google_token.pickle` (gitignored).
@@ -272,6 +274,49 @@ Edit `config/triggers.yaml` — schedules, important-sender allowlist, urgency k
 The only files committed to git are source code, configs (`personality.md`, `triggers.yaml`), the `.env.example` template (no real values), and the launchd plists (which use `__V1_DIR__` placeholders — actual paths are filled in only on the local machine during install).
 
 The agent talks to Anthropic's API; Anthropic's commercial privacy terms apply (no training on API data, 30-day retention by default). Every API event is also logged locally in `data/memory.sqlite` (`api_events` table) so you can audit independently.
+
+### Key rotation + handling discipline
+
+Treat every key in `.env` like a password. **A key is compromised the moment it leaves the file.**
+
+**Never paste keys into:**
+- Chat tools (Slack, iMessage, this assistant's transcript, GitHub Copilot Chat, anything with a server-side history)
+- Issue trackers, PRs, comments
+- Screenshots or screen recordings
+- Documentation pulled into Drive / Notion / Confluence
+- Cloud-synced text files (Notes, Obsidian-with-sync, etc.)
+- Browser address bar / bookmarks (URLs leak via history sync)
+
+**If a key is exposed (intentionally during setup or accidentally), rotate it.** Don't hope nobody noticed.
+
+**Rotation cadence and procedure for each:**
+
+| Token | Where to revoke + regenerate | Notes |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) → API Keys → revoke, create new | If revoked, the relay will start erroring; update `.env` and reload (`./launch_agents/install.sh` re-bootstraps). |
+| `TODOIST_API_KEY` | [Todoist Settings → Integrations → Developer](https://todoist.com/app/settings/integrations/developer) → "Reset" | Single user-level token. |
+| `NOTION_INTEGRATION_TOKEN` | [notion.so/profile/integrations](https://www.notion.so/profile/integrations) → your integration → Configuration → "Generate new token" | Old token is invalidated. Page-share connections persist. |
+| `GITHUB_TOKEN` | [github.com/settings/tokens](https://github.com/settings/tokens) → "Delete" / "Regenerate" | If you used a fine-grained token, the new one inherits the same scopes if you regenerate. |
+| `BRAVE_SEARCH_API_KEY` | api.search.brave.com → API Keys → delete + create new | |
+| `YOUTUBE_API_KEY` | console.cloud.google.com → APIs & Services → Credentials → delete + create new | While you're there, restrict the new one to "YouTube Data API v3" only. |
+| `DROPBOX_ACCESS_TOKEN` | [dropbox.com/developers/apps](https://www.dropbox.com/developers/apps) → your app → Settings → Generate new access token | Short-lived `sl.u.` tokens auto-expire in ~4h regardless. |
+| Google OAuth (Gmail+Calendar) | console.cloud.google.com → APIs & Services → Credentials → delete the OAuth client; OR revoke the token at myaccount.google.com → Security → Third-party access | Then re-download `credentials.json`, delete `data/google_token.pickle`, re-run `python -m mcp_servers.google_auth`. |
+
+**Recommended schedule:**
+- Rotate every key at minimum once per quarter, even with no known exposure.
+- Rotate immediately after: sharing a key with a build assistant; granting someone else temporary access to your machine; a laptop loss/theft event; a data-breach announcement at any of the providers.
+
+**Detection:** the cost report (`python -m tools.cost_report --days 7`) shows daily Anthropic spend. Spikes can indicate either heavy use or someone else using your key. Each provider's web console also has usage/billing dashboards.
+
+### When sharing setup with another assistant
+
+If you ask a build/coding assistant (Claude, ChatGPT, Cursor, etc.) to help configure or debug this project:
+
+- **Don't paste real tokens.** Share placeholders (`<my-anthropic-key>`) and let the assistant guide you to put real values into `.env` yourself.
+- If you DO paste a real key (the assistant needs it to live-test), **rotate that key as soon as the session ends**.
+- Skim assistant transcripts before saving them to Drive / sharing with teammates — they can contain pasted secrets.
+
+The local-only files this project produces (`.env`, `config/credentials.json`, `data/`) are the trust boundary. Anything that leaves those files via copy/paste/screenshot has effectively been published — assume so and rotate.
 
 ---
 
