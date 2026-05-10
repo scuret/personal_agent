@@ -8,6 +8,9 @@
     <key>ProgramArguments</key>
     <array>
         <string>__V1_DIR__/.venv/bin/python</string>
+        <!-- -u: unbuffered stdout/stderr so log files reflect real-time
+             output instead of waiting for Python's block-buffer to flush. -->
+        <string>-u</string>
         <string>-m</string>
         <string>scheduler.triggers</string>
     </array>

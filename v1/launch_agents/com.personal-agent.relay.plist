@@ -8,6 +8,10 @@
     <key>ProgramArguments</key>
     <array>
         <string>__V1_DIR__/.venv/bin/python</string>
+        <!-- -u: unbuffered stdout/stderr so log files reflect real-time
+             output instead of waiting for Python's block-buffer to flush
+             (which it never does, in a long-running daemon). -->
+        <string>-u</string>
         <string>-m</string>
         <string>relay.imessage_relay</string>
     </array>

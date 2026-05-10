@@ -21,6 +21,8 @@ LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 
 mkdir -p "$LAUNCH_AGENTS_DIR"
 
+UID_DOMAIN="gui/$(id -u)"
+
 for label in com.personal-agent.relay com.personal-agent.scheduler; do
     src="$SCRIPT_DIR/${label}.plist"
     dst="$LAUNCH_AGENTS_DIR/${label}.plist"
@@ -36,12 +38,15 @@ for label in com.personal-agent.relay com.personal-agent.scheduler; do
     sed "s|__V1_DIR__|$V1_DIR|g" "$src" > "$dst"
     echo "installed: $dst"
 
-    # If the agent is already loaded, unload first so launchctl picks up
-    # any plist edits (e.g. path changes after a repo move).
-    if launchctl list | grep -q "$label"; then
-        launchctl unload "$dst" 2>/dev/null || true
+    # bootout/bootstrap is the modern way to (un)register a service. The
+    # legacy load/unload silently caches the old plist contents in some
+    # macOS versions, so plist edits don't actually take effect — bootout
+    # tears the registration down completely so bootstrap loads fresh.
+    if launchctl print "$UID_DOMAIN/$label" >/dev/null 2>&1; then
+        launchctl bootout "$UID_DOMAIN/$label" 2>/dev/null || true
+        sleep 1  # give launchd a moment to fully release the slot
     fi
-    launchctl load "$dst"
+    launchctl bootstrap "$UID_DOMAIN" "$dst"
     echo "  loaded:    $label"
 done
 
