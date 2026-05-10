@@ -233,9 +233,16 @@ async def process_turn(
                     meta[attr] = v
             usage = getattr(message, "usage", None)
             if usage is not None:
-                meta["usage"] = (
-                    usage.__dict__ if hasattr(usage, "__dict__") else str(usage)
-                )
+                # ResultMessage.usage is a TypedDict in current SDK builds
+                # (hence isinstance(dict) check first). Older or future
+                # builds may use an object with __dict__. str() is the
+                # last-resort fallback so we capture *something*.
+                if isinstance(usage, dict):
+                    meta["usage"] = usage
+                elif hasattr(usage, "__dict__"):
+                    meta["usage"] = usage.__dict__
+                else:
+                    meta["usage"] = str(usage)
             store.log_api_event("result", str(message), conversation_id, metadata=meta)
 
     return "\n".join(reply_chunks)
