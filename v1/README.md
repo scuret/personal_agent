@@ -13,6 +13,7 @@ The agent is a single Claude reasoning loop with twelve in-process MCP sub-agent
 | Sub-agent | What it does | Auth | Free? |
 |---|---|---|---|
 | **memory** | Conversation archive + extracted facts + audit log | Local SQLite | ✅ free |
+| **archive** | Aggregate analytics — counts, top tools, activity by hour/day | Local SQLite | ✅ free |
 | **gmail** | Search, read, draft, archive. **Never sends.** | Google OAuth | ✅ free |
 | **calendar** | Read events, search, free/busy check | Google OAuth | ✅ free |
 | **todoist** | List/create/update/complete tasks | API token | ✅ free |
@@ -274,6 +275,11 @@ sqlite3 data/memory.sqlite \
 # Cost / token report (last 7 days)
 python -m tools.cost_report
 python -m tools.cost_report --days 30
+
+# Behavioral analytics (activity by hour/day, tool usage rankings,
+# slow turns, conversation lengths)
+python -m tools.analytics
+python -m tools.analytics --days 30
 
 # Daemon logs
 tail -f data/relay.log data/relay.err.log

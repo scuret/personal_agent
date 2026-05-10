@@ -4,7 +4,7 @@ What's shipped, what's planned, and what each planned item needs to actually lan
 
 ## Shipped
 
-14 sub-agents currently live: **memory, todoist, gmail, calendar (read), weather, vision, notion, github, web (Brave search + URL fetch), youtube, dropbox, wikipedia, reddit (public read), reminders.**
+15 sub-agents currently live: **memory, archive (aggregate analytics), todoist, gmail, calendar (read), weather, vision, notion, github, web (Brave search + URL fetch), youtube, dropbox, wikipedia, reddit (public read), reminders.**
 
 Plus operational tooling: cost dashboard, log rotation, scheduler missed-fire catchup, token-health CLI, audit log of every Anthropic API event, iMessage relay (contact + self mode), morning-brief / Sunday-review scheduler, LaunchAgent auto-start.
 
@@ -97,8 +97,8 @@ These aren't user-facing capabilities but improve daily use.
 
 - **Tighter morning brief / weekly review prompts** — audit found briefs sometimes run ~450 chars; could tighten to ~250 with prompt tweaks. Pure code. ~15 min.
 - **Tighter replies on very short user messages** — personality nudge so single-word follow-ups get one-word answers. Pure code. ~10 min.
-- **Audit-log analytics tool** — beyond cost-report: where time is spent (slow turns), which tools fire together, conversation-length distributions. Pure code. ~hour.
-- **"Query archive" tool** — agent can answer "how many tasks did I complete this week" with safe SQL-shaped questions over the local archive instead of recall heuristics. Pure code. ~hour.
+- ~~Audit-log analytics tool~~ — shipped as `tools/analytics.py`.
+- ~~"Query archive" tool~~ — shipped as the `archive` sub-agent.
 - **Recurring reminders** — currently only one-off; add cron-shaped expressions like "remind me every Tuesday at 9am to..." Pure code. ~30 min.
 
 ## Items considered but explicitly NOT planned
