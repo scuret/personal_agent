@@ -23,6 +23,8 @@ The agent is a single Claude reasoning loop with twelve in-process MCP sub-agent
 | **web** | Brave Search + URL fetch | API key | ✅ 2K/mo free |
 | **youtube** | Search + video/channel metadata | API key | ✅ 10K units/day |
 | **dropbox** | Search, list, read text, share-link | Access token | ✅ free |
+| **wikipedia** | Search, summary, full article extract | None needed | ✅ free |
+| **reddit** | Subreddit top/hot, search, post + comments | None (public read) | ✅ free |
 | **reminders** | Schedule "remind me at 4pm to..." | None needed | ✅ free |
 
 Plus: **scheduled morning brief** (~7:30 AM) and **Sunday weekly review** (8 PM) auto-pushed to iMessage.

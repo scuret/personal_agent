@@ -4,7 +4,7 @@ What's shipped, what's planned, and what each planned item needs to actually lan
 
 ## Shipped
 
-12 sub-agents currently live: **memory, todoist, gmail, calendar (read), weather, vision, notion, github, web (Brave search + URL fetch), youtube, dropbox, reminders.**
+14 sub-agents currently live: **memory, todoist, gmail, calendar (read), weather, vision, notion, github, web (Brave search + URL fetch), youtube, dropbox, wikipedia, reddit (public read), reminders.**
 
 Plus operational tooling: cost dashboard, log rotation, scheduler missed-fire catchup, token-health CLI, audit log of every Anthropic API event, iMessage relay (contact + self mode), morning-brief / Sunday-review scheduler, LaunchAgent auto-start.
 
@@ -33,18 +33,8 @@ Each item lists what it adds, why it's not in yet, and what unblocks it.
 - **Remote-buildable** (CoinGecko needs no signup; Alpha Vantage takes ~2 min on the web).
 - **Effort:** ~45 min.
 
-### Wikipedia
-- **What:** Search Wikipedia, fetch article summaries / sections.
-- **Why deferred:** Web-search sub-agent already covers most lookups; Wikipedia is a more-targeted version.
-- **Unblocks:** Pure code, public REST API, no auth. **Remote-buildable.**
-- **Effort:** ~30 min.
-
-### Reddit (public read-only)
-- **What:** Search posts, get subreddit top posts, fetch a post + its comments.
-- **Why deferred:** Niche; web search covers most "what's the discussion on X" needs.
-- **Unblocks:** Public JSON endpoints (`reddit.com/r/<sub>/.json`) require no auth but are rate-limited. Authenticated mode would need a "script" app registered + OAuth, which is clunky.
-- **Remote-buildable** for the read-only public mode.
-- **Effort:** ~45 min.
+### ~~Wikipedia~~ — shipped
+### ~~Reddit (public read-only)~~ — shipped
 
 ### Calendar writes (create / update / delete events)
 - **What:** Extend the existing calendar MCP server with the three write tools we already coded but had to revert.

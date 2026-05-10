@@ -53,11 +53,13 @@ from mcp_servers.github_server import create_github_mcp_server  # noqa: E402
 from mcp_servers.gmail_server import create_gmail_mcp_server  # noqa: E402
 from mcp_servers.memory_server import create_memory_mcp_server  # noqa: E402
 from mcp_servers.notion_server import create_notion_mcp_server  # noqa: E402
+from mcp_servers.reddit_server import create_reddit_mcp_server  # noqa: E402
 from mcp_servers.reminders_server import create_reminders_mcp_server  # noqa: E402
 from mcp_servers.todoist_server import create_todoist_mcp_server  # noqa: E402
 from mcp_servers.vision_server import create_vision_mcp_server  # noqa: E402
 from mcp_servers.weather_server import create_weather_mcp_server  # noqa: E402
 from mcp_servers.web_server import create_web_mcp_server  # noqa: E402
+from mcp_servers.wikipedia_server import create_wikipedia_mcp_server  # noqa: E402
 from mcp_servers.youtube_server import create_youtube_mcp_server  # noqa: E402
 from system_prompt import build_system_prompt  # noqa: E402
 
@@ -152,6 +154,19 @@ DROPBOX_TOOLS = [
     "mcp__dropbox__dropbox_create_share_link",
 ]
 
+WIKIPEDIA_TOOLS = [
+    "mcp__wikipedia__wiki_search",
+    "mcp__wikipedia__wiki_summary",
+    "mcp__wikipedia__wiki_get_article",
+]
+
+REDDIT_TOOLS = [
+    "mcp__reddit__reddit_subreddit_top",
+    "mcp__reddit__reddit_subreddit_hot",
+    "mcp__reddit__reddit_search",
+    "mcp__reddit__reddit_get_post",
+]
+
 
 # ─── Safety hooks ───────────────────────────────────────────────────────────
 #
@@ -204,6 +219,8 @@ def build_options(store: MemoryStore) -> ClaudeAgentOptions:
             "reminders": create_reminders_mcp_server(store),
             "youtube": create_youtube_mcp_server(),
             "dropbox": create_dropbox_mcp_server(),
+            "wikipedia": create_wikipedia_mcp_server(),
+            "reddit": create_reddit_mcp_server(),
         },
         # Allowlist what tools the agent may call. Anything not listed here
         # is blocked.
@@ -211,6 +228,7 @@ def build_options(store: MemoryStore) -> ClaudeAgentOptions:
             MEMORY_TOOLS + TODOIST_TOOLS + GMAIL_TOOLS + CALENDAR_TOOLS
             + WEATHER_TOOLS + VISION_TOOLS + NOTION_TOOLS + GITHUB_TOOLS
             + WEB_TOOLS + REMINDER_TOOLS + YOUTUBE_TOOLS + DROPBOX_TOOLS
+            + WIKIPEDIA_TOOLS + REDDIT_TOOLS
         ),
         # Isolate the agent from the user's Claude Code environment:
         #   * `tools=[]` disables built-in CLI primitives (Bash, Read, Edit,
