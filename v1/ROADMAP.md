@@ -99,7 +99,7 @@ These aren't user-facing capabilities but improve daily use.
 - **Tighter replies on very short user messages** — personality nudge so single-word follow-ups get one-word answers. Pure code. ~10 min.
 - ~~Audit-log analytics tool~~ — shipped as `tools/analytics.py`.
 - ~~"Query archive" tool~~ — shipped as the `archive` sub-agent.
-- **Recurring reminders** — currently only one-off; add cron-shaped expressions like "remind me every Tuesday at 9am to..." Pure code. ~30 min.
+- ~~Recurring reminders~~ — shipped (`remind_recurring` tool with daily / weekdays / weekly / monthly patterns).
 
 ## Pending verification
 
