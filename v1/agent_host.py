@@ -51,6 +51,7 @@ from mcp_servers.calendar_server import create_calendar_mcp_server  # noqa: E402
 from mcp_servers.gmail_server import create_gmail_mcp_server  # noqa: E402
 from mcp_servers.memory_server import create_memory_mcp_server  # noqa: E402
 from mcp_servers.todoist_server import create_todoist_mcp_server  # noqa: E402
+from mcp_servers.weather_server import create_weather_mcp_server  # noqa: E402
 from system_prompt import build_system_prompt  # noqa: E402
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
@@ -88,6 +89,11 @@ CALENDAR_TOOLS = [
     "mcp__calendar__calendar_search_events",
     "mcp__calendar__calendar_check_availability",
     "mcp__calendar__calendar_get_event",
+]
+
+WEATHER_TOOLS = [
+    "mcp__weather__weather_current",
+    "mcp__weather__weather_forecast",
 ]
 
 
@@ -134,10 +140,11 @@ def build_options(store: MemoryStore) -> ClaudeAgentOptions:
             "todoist": create_todoist_mcp_server(),
             "gmail": create_gmail_mcp_server(),
             "calendar": create_calendar_mcp_server(),
+            "weather": create_weather_mcp_server(),
         },
         # Allowlist what tools the agent may call. Anything not listed here
-        # is blocked. v1 integrations are now complete.
-        allowed_tools=MEMORY_TOOLS + TODOIST_TOOLS + GMAIL_TOOLS + CALENDAR_TOOLS,
+        # is blocked.
+        allowed_tools=MEMORY_TOOLS + TODOIST_TOOLS + GMAIL_TOOLS + CALENDAR_TOOLS + WEATHER_TOOLS,
         # Isolate the agent from the user's Claude Code environment:
         #   * `tools=[]` disables built-in CLI primitives (Bash, Read, Edit,
         #     ToolSearch, etc.). The agent runs ONLY our MCP-defined tools.
