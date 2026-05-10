@@ -48,6 +48,7 @@ from claude_agent_sdk import (  # noqa: E402
 from claude_agent_sdk.types import HookContext  # noqa: E402
 
 from memory.store import MemoryStore  # noqa: E402
+from mcp_servers.archive_server import create_archive_mcp_server  # noqa: E402
 from mcp_servers.calendar_server import create_calendar_mcp_server  # noqa: E402
 from mcp_servers.dropbox_server import create_dropbox_mcp_server  # noqa: E402
 from mcp_servers.github_server import create_github_mcp_server  # noqa: E402
@@ -168,6 +169,13 @@ REDDIT_TOOLS = [
     "mcp__reddit__reddit_get_post",
 ]
 
+ARCHIVE_TOOLS = [
+    "mcp__archive__archive_activity_summary",
+    "mcp__archive__archive_top_tools",
+    "mcp__archive__archive_recent_conversations",
+    "mcp__archive__archive_activity_by_hour",
+]
+
 
 # ─── Sub-agent enablement ───────────────────────────────────────────────────
 #
@@ -237,6 +245,7 @@ def build_options(store: MemoryStore) -> ClaudeAgentOptions:
     # and the agent never tries to call something that'd fail.
     candidates: list[tuple[str, Any, list[str], Any]] = [
         ("memory",    lambda: create_memory_mcp_server(store),     MEMORY_TOOLS,    lambda: True),
+        ("archive",   lambda: create_archive_mcp_server(store),    ARCHIVE_TOOLS,   lambda: True),
         ("weather",   lambda: create_weather_mcp_server(),         WEATHER_TOOLS,   lambda: True),
         ("vision",    lambda: create_vision_mcp_server(store),     VISION_TOOLS,    lambda: True),
         ("wikipedia", lambda: create_wikipedia_mcp_server(),       WIKIPEDIA_TOOLS, lambda: True),
