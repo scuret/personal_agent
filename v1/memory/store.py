@@ -84,8 +84,11 @@ CREATE TABLE IF NOT EXISTS state (
     updated_at TEXT NOT NULL
 );
 
--- Scheduled reminders. The agent schedules these via mcp__reminders__remind;
--- the scheduler daemon polls and fires them at fire_at.
+-- Scheduled reminders. The agent schedules these via mcp__reminders__remind
+-- (one-off) or mcp__reminders__remind_recurring (recurring); the scheduler
+-- daemon polls and fires them at fire_at. Recurring reminders have a JSON
+-- recurrence_rule and never get fired_at set — instead, after each fire
+-- we advance their fire_at to the next occurrence.
 CREATE TABLE IF NOT EXISTS reminders (
     id                     INTEGER PRIMARY KEY AUTOINCREMENT,
     fire_at                TEXT NOT NULL,
@@ -93,7 +96,8 @@ CREATE TABLE IF NOT EXISTS reminders (
     source_conversation_id TEXT,
     created_at             TEXT NOT NULL,
     fired_at               TEXT,
-    cancelled_at           TEXT
+    cancelled_at           TEXT,
+    recurrence_rule        TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_reminders_pending
     ON reminders(fire_at)
@@ -127,7 +131,16 @@ class MemoryStore:
         return c
 
     def _init_schema(self) -> None:
-        self._conn().executescript(_SCHEMA)
+        conn = self._conn()
+        conn.executescript(_SCHEMA)
+        # Defensive migrations — add columns introduced after the table
+        # was first created. Older databases may be missing them.
+        existing_cols = {
+            r["name"]
+            for r in conn.execute("PRAGMA table_info(reminders)").fetchall()
+        }
+        if "recurrence_rule" not in existing_cols:
+            conn.execute("ALTER TABLE reminders ADD COLUMN recurrence_rule TEXT")
 
     # ─── Conversation archive ───────────────────────────────────────────────
 
@@ -313,20 +326,36 @@ class MemoryStore:
         fire_at: str,
         message: str,
         source_conversation_id: str | None = None,
+        recurrence_rule: dict[str, Any] | None = None,
     ) -> int:
-        """Insert a pending reminder. Returns the new reminder id."""
+        """Insert a pending reminder. Returns the new reminder id.
+
+        If `recurrence_rule` is provided, the reminder fires repeatedly:
+        each time the scheduler delivers it, its fire_at advances to the
+        next occurrence (and fired_at is never set). Cancel via cancel_reminder.
+        """
         cur = self._conn().execute(
             """INSERT INTO reminders
-                   (fire_at, message, source_conversation_id, created_at)
-               VALUES (?, ?, ?, ?)""",
-            (fire_at, message, source_conversation_id, _now()),
+                   (fire_at, message, source_conversation_id, created_at, recurrence_rule)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                fire_at,
+                message,
+                source_conversation_id,
+                _now(),
+                json.dumps(recurrence_rule) if recurrence_rule else None,
+            ),
         )
         return int(cur.lastrowid or 0)
 
     def get_due_reminders(self, before_iso: str) -> list[dict[str, Any]]:
-        """Return pending reminders with fire_at <= before_iso, oldest first."""
+        """Return pending reminders with fire_at <= before_iso, oldest first.
+
+        Includes both one-off and recurring reminders. The scheduler
+        differentiates by checking `recurrence_rule`.
+        """
         rows = self._conn().execute(
-            """SELECT id, fire_at, message, source_conversation_id, created_at
+            """SELECT id, fire_at, message, source_conversation_id, created_at, recurrence_rule
                  FROM reminders
                 WHERE fired_at IS NULL
                   AND cancelled_at IS NULL
@@ -337,9 +366,13 @@ class MemoryStore:
         return [dict(r) for r in rows]
 
     def list_pending_reminders(self, limit: int = 50) -> list[dict[str, Any]]:
-        """Return all not-yet-fired, not-cancelled reminders ordered by fire_at."""
+        """Return all not-yet-fired, not-cancelled reminders ordered by fire_at.
+
+        Includes recurring reminders (which have non-null recurrence_rule
+        and never get fired_at set).
+        """
         rows = self._conn().execute(
-            """SELECT id, fire_at, message, created_at
+            """SELECT id, fire_at, message, created_at, recurrence_rule
                  FROM reminders
                 WHERE fired_at IS NULL AND cancelled_at IS NULL
              ORDER BY fire_at ASC
@@ -349,9 +382,19 @@ class MemoryStore:
         return [dict(r) for r in rows]
 
     def mark_reminder_fired(self, reminder_id: int) -> None:
+        """One-off completion. Don't call for recurring reminders — use
+        advance_reminder_fire_at instead so they keep firing."""
         self._conn().execute(
             "UPDATE reminders SET fired_at = ? WHERE id = ?",
             (_now(), reminder_id),
+        )
+
+    def advance_reminder_fire_at(self, reminder_id: int, next_fire_at: str) -> None:
+        """For recurring reminders: roll fire_at forward to the next occurrence
+        without marking fired_at. Reminder stays pending."""
+        self._conn().execute(
+            "UPDATE reminders SET fire_at = ? WHERE id = ?",
+            (next_fire_at, reminder_id),
         )
 
     def cancel_reminder(self, reminder_id: int) -> bool:

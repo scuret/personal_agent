@@ -137,6 +137,7 @@ WEB_TOOLS = [
 
 REMINDER_TOOLS = [
     "mcp__reminders__remind",
+    "mcp__reminders__remind_recurring",
     "mcp__reminders__list_reminders",
     "mcp__reminders__cancel_reminder",
 ]

@@ -220,24 +220,56 @@ def _fire_due_reminders(store: MemoryStore) -> None:
 
     Runs on every scheduler tick. Reminders are stored with ISO 8601 +
     offset, so we compare against UTC-now in ISO form. The agent
-    schedules them via mcp__reminders__remind.
+    schedules them via mcp__reminders__remind (one-off) or
+    mcp__reminders__remind_recurring.
 
-    On send error, we leave the reminder in pending state so the next
-    tick retries. Sender is transport-agnostic — `make_sender()` returns
-    an iMessage or Telegram sender depending on RELAY_TRANSPORT.
+    For one-off reminders we mark fired_at after a successful send.
+    For recurring reminders we advance fire_at to the next occurrence
+    and leave fired_at NULL so they keep firing.
+
+    On send error, we leave the reminder in pending state (no advance,
+    no fired_at update) so the next tick retries.
     """
-    now_iso = datetime.now(timezone.utc).isoformat()
-    due = store.get_due_reminders(before_iso=now_iso)
+    now = datetime.now(timezone.utc)
+    due = store.get_due_reminders(before_iso=now.isoformat())
     if not due:
         return
     sender = make_sender()
     for r in due:
         ok, err = sender.send(r["message"])
-        if ok:
-            store.mark_reminder_fired(r["id"])
-            print(f"[reminder fired] #{r['id']}: {r['message'][:80]}")
-        else:
+        if not ok:
             print(f"[reminder send failed] #{r['id']}: {err}", file=sys.stderr)
+            continue
+
+        rule_raw = r.get("recurrence_rule")
+        if rule_raw:
+            try:
+                rule = json.loads(rule_raw)
+            except (TypeError, ValueError):
+                rule = None
+            if rule:
+                # Lazy import — keeps reminders_server only loaded when needed.
+                from mcp_servers.reminders_server import _next_recurrence
+
+                next_fire = _next_recurrence(rule, now)
+                if next_fire is not None:
+                    store.advance_reminder_fire_at(r["id"], next_fire.isoformat())
+                    print(
+                        f"[reminder fired] #{r['id']} (recurring → next "
+                        f"{next_fire.strftime('%Y-%m-%d %H:%M %Z')}): "
+                        f"{r['message'][:80]}"
+                    )
+                    continue
+            # Bad/unparseable rule — fall through to one-off marking so we
+            # don't loop forever on the same row.
+            print(
+                f"[reminder warn] #{r['id']} has unparseable recurrence_rule; "
+                "treating as one-off",
+                file=sys.stderr,
+            )
+
+        store.mark_reminder_fired(r["id"])
+        print(f"[reminder fired] #{r['id']}: {r['message'][:80]}")
 
 
 async def _fire_trigger(trigger_name: str) -> None:
