@@ -173,8 +173,23 @@ class ChatReader:
                     LIMIT ?""",
                 (self.target_handle, last_rowid, limit),
             ).fetchall()
-        max_rowid = max((int(r["rowid"]) for r in rows), default=last_rowid)
-        return [self._row_to_dict(r) for r in rows], max_rowid
+        result: list[dict[str, Any]] = []
+        max_rowid = last_rowid
+        for r in rows:
+            max_rowid = max(max_rowid, int(r["rowid"]))
+            text = r["text"] or ""
+            if not text.strip():
+                # Empty incoming messages happen with image/sticker-only
+                # sends, tap-back reactions, and Apple's pseudo-rows. Log
+                # so the user can tell "no reply because empty" apart from
+                # "no reply because broken".
+                print(
+                    f"[skipped: empty text from {r['sender']} (rowid={r['rowid']})]",
+                    flush=True,
+                )
+                continue
+            result.append(self._row_to_dict(r))
+        return result, max_rowid
 
     def _fetch_self(
         self, last_rowid: int, limit: int
@@ -200,14 +215,22 @@ class ChatReader:
         # regardless of is_from_me — see class docstring. We still report
         # max_rowid across ALL returned rows so last_seen advances past the
         # skipped ones; otherwise they'd be re-fetched forever.
+        #
+        # Empty-text skips get logged so "no reply" is debuggable. ZWSP-
+        # tagged skips are silent — they're our own outgoing replies and
+        # logging them on every poll cycle would be noise.
         result: list[dict[str, Any]] = []
         max_rowid = last_rowid
         for r in rows:
             max_rowid = max(max_rowid, int(r["rowid"]))
             text = r["text"] or ""
-            if not text.strip():
-                continue
             if text.startswith(OUTGOING_MARKER):
+                continue
+            if not text.strip():
+                print(
+                    f"[skipped: empty text in chat={r['sender']} (rowid={r['rowid']})]",
+                    flush=True,
+                )
                 continue
             result.append(self._row_to_dict(r))
         return result, max_rowid
