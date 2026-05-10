@@ -215,6 +215,175 @@ def _compute_next_fires(now_local: datetime, config: dict[str, Any]) -> list[tup
 # ─── Sending ─────────────────────────────────────────────────────────────────
 
 
+# ─── Email watch ────────────────────────────────────────────────────────────
+#
+# Polls Gmail for new unread email and pings the principal when something
+# matches the rules in config/triggers.yaml's `email_triggers` block.
+# Runs as part of the scheduler tick (no separate daemon) so it's gated
+# by both the master `enabled` flag AND a `every_minutes` throttle.
+
+
+_EMAIL_WATCH_LAST_CHECK_KEY = "email_watch_last_check"
+_EMAIL_WATCH_SEEN_KEY = "email_watch_seen_ids"
+# Trim the seen-ID set to this size so it doesn't grow forever; emails
+# we've already seen don't re-trigger if Gmail's `newer_than:Nh` window
+# overlaps with our previous fire.
+_EMAIL_WATCH_SEEN_CAP = 200
+
+
+def _fetch_recent_unread_gmail(limit: int = 50) -> list[dict[str, Any]]:
+    """Fetch unread Gmail messages from the last hour, metadata only.
+
+    Uses Gmail's `newer_than:1h` which gives an hour of slop on top of
+    our 15-minute (default) tick — emails arriving during a fire are
+    still picked up on the next one. Dedup happens in caller via the
+    seen-ID set.
+    """
+    from mcp_servers.google_auth import build_service  # late import — lazy
+
+    svc = build_service("gmail", "v1")
+    resp = (
+        svc.users()
+        .messages()
+        .list(userId="me", q="is:unread newer_than:1h", maxResults=limit)
+        .execute()
+    )
+    ids = [m["id"] for m in (resp.get("messages") or [])]
+    out: list[dict[str, Any]] = []
+    for mid in ids:
+        msg = (
+            svc.users()
+            .messages()
+            .get(userId="me", id=mid, format="metadata")
+            .execute()
+        )
+        headers = {
+            h["name"]: h["value"] for h in (msg["payload"].get("headers") or [])
+        }
+        out.append(
+            {
+                "id": mid,
+                "thread_id": msg.get("threadId", ""),
+                "from": headers.get("From", ""),
+                "subject": headers.get("Subject", ""),
+                "date": headers.get("Date", ""),
+                "snippet": msg.get("snippet", ""),
+            }
+        )
+    return out
+
+
+def _email_matches_rules(
+    email: dict[str, Any], senders: list[str], keywords: list[str]
+) -> tuple[bool, str]:
+    """Return (matches, reason). Case-insensitive substring matching."""
+    from_field = (email.get("from") or "").lower()
+    subject = (email.get("subject") or "").lower()
+    snippet = (email.get("snippet") or "").lower()
+    haystack = f"{subject}\n{snippet}"
+    for sender in senders:
+        s = (sender or "").strip().lower()
+        if s and s in from_field:
+            return True, f"sender match: {sender}"
+    for kw in keywords:
+        k = (kw or "").strip().lower()
+        if k and k in haystack:
+            return True, f"keyword match: {kw}"
+    return False, ""
+
+
+def _short_sender(from_header: str) -> str:
+    """Pull a friendly sender name from a 'Display Name <addr@example.com>' header."""
+    s = (from_header or "").strip()
+    if "<" in s:
+        s = s.split("<")[0].strip().strip('"')
+    if len(s) > 40:
+        s = s[:40] + "…"
+    return s or "?"
+
+
+def _fire_email_watch(store: MemoryStore, config: dict[str, Any], now: datetime) -> None:
+    cfg = (config.get("email_triggers") or {})
+    if not cfg.get("enabled"):
+        return
+
+    every = int(cfg.get("every_minutes", 15))
+    last_check_str = store.get_state(_EMAIL_WATCH_LAST_CHECK_KEY)
+    if last_check_str:
+        try:
+            last_check = datetime.fromisoformat(last_check_str)
+        except ValueError:
+            last_check = None
+        if last_check is not None and (now - last_check).total_seconds() < every * 60:
+            return  # not yet — throttled
+
+    senders = list(cfg.get("important_senders") or [])
+    keywords = list(cfg.get("urgency_keywords") or [])
+    if not senders and not keywords:
+        # No filters configured — nothing could match. Update state to keep
+        # throttling honest, then exit silently.
+        store.set_state(_EMAIL_WATCH_LAST_CHECK_KEY, now.isoformat())
+        return
+
+    # Load the seen-id set from state.
+    try:
+        seen_list = json.loads(store.get_state(_EMAIL_WATCH_SEEN_KEY, "[]") or "[]")
+        if not isinstance(seen_list, list):
+            seen_list = []
+    except json.JSONDecodeError:
+        seen_list = []
+    seen: set[str] = set(seen_list)
+
+    try:
+        emails = _fetch_recent_unread_gmail(limit=50)
+    except Exception as e:  # noqa: BLE001
+        print(f"[email_watch] gmail fetch failed: {e}", file=sys.stderr)
+        return
+
+    flagged: list[tuple[dict[str, Any], str]] = []
+    for email in emails:
+        eid = email["id"]
+        if eid in seen:
+            continue
+        seen.add(eid)
+        matched, reason = _email_matches_rules(email, senders, keywords)
+        if matched:
+            flagged.append((email, reason))
+
+    # Cap and persist seen set.
+    if len(seen) > _EMAIL_WATCH_SEEN_CAP:
+        seen = set(list(seen)[-_EMAIL_WATCH_SEEN_CAP:])
+    store.set_state(_EMAIL_WATCH_SEEN_KEY, json.dumps(list(seen)))
+    store.set_state(_EMAIL_WATCH_LAST_CHECK_KEY, now.isoformat())
+
+    if not flagged:
+        return
+
+    if len(flagged) == 1:
+        email, reason = flagged[0]
+        text = (
+            f"📧 Important email\n"
+            f"from {_short_sender(email['from'])}\n"
+            f"subject: {email['subject'] or '(no subject)'}\n"
+            f"({reason})"
+        )
+    else:
+        lines = [f"📧 {len(flagged)} important emails:"]
+        for email, reason in flagged:
+            subj = (email["subject"] or "(no subject)")[:60]
+            lines.append(
+                f"- {_short_sender(email['from'])}: {subj} ({reason})"
+            )
+        text = "\n".join(lines)
+
+    sender = make_sender()
+    ok, err = sender.send(text)
+    if ok:
+        print(f"[email_watch] notified — {len(flagged)} flagged email(s)")
+    else:
+        print(f"[email_watch] send failed: {err}", file=sys.stderr)
+
+
 def _fire_due_reminders(store: MemoryStore) -> None:
     """Send any pending reminder whose fire_at has passed.
 
@@ -414,6 +583,15 @@ async def _run_daemon() -> None:
             _fire_due_reminders(store)
         except Exception as e:  # noqa: BLE001
             print(f"[reminders error] {e}", file=sys.stderr)
+
+        # Email watch — gated by `email_triggers.enabled` and throttled
+        # internally to every_minutes (default 15). Runs on every tick
+        # but the throttle inside _fire_email_watch keeps it from
+        # actually hitting Gmail more than once per window.
+        try:
+            _fire_email_watch(store, config, now)
+        except Exception as e:  # noqa: BLE001
+            print(f"[email_watch error] {e}", file=sys.stderr)
 
         # Re-read config so triggers.yaml edits take effect within ~30s.
         config = _load_config()
