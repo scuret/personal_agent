@@ -23,7 +23,7 @@ mkdir -p "$LAUNCH_AGENTS_DIR"
 
 UID_DOMAIN="gui/$(id -u)"
 
-for label in com.personal-agent.relay com.personal-agent.scheduler com.personal-agent.log-rotation; do
+for label in com.personal-agent.relay com.personal-agent.scheduler com.personal-agent.log-rotation com.personal-agent.web; do
     src="$SCRIPT_DIR/${label}.plist"
     dst="$LAUNCH_AGENTS_DIR/${label}.plist"
 
@@ -54,6 +54,9 @@ echo
 echo "done. tail logs to verify:"
 echo "  tail -f $V1_DIR/data/relay.log $V1_DIR/data/relay.err.log"
 echo "  tail -f $V1_DIR/data/scheduler.log $V1_DIR/data/scheduler.err.log"
+echo "  tail -f $V1_DIR/data/web.log $V1_DIR/data/web.err.log"
 echo
 echo "the daemons will auto-start every time you log in. to remove:"
 echo "  $SCRIPT_DIR/uninstall.sh"
+echo
+echo "web UI: http://127.0.0.1:8770"

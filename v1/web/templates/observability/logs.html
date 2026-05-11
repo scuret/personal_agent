@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} log · personal_agent{% endblock %}
+{% block content %}
+
+<div class="flex items-baseline justify-between mb-4">
+    <h1 class="text-2xl font-semibold">{{ name }} log</h1>
+    <div class="flex gap-2 text-sm">
+        {% for d in daemons %}
+        <a href="/observability/logs/{{ d }}"
+           class="px-3 py-1.5 rounded {{ 'bg-zinc-700' if d == name else 'bg-zinc-800 hover:bg-zinc-700' }}">{{ d }}</a>
+        {% endfor %}
+    </div>
+</div>
+
+<p class="text-xs text-zinc-500 mb-3">live-tailed via SSE. last 300 lines shown initially, then new lines as they arrive.</p>
+
+<div hx-ext="sse"
+     sse-connect="/daemon/{{ name }}/log-stream"
+     sse-swap="message"
+     hx-swap="beforeend"
+     class="log-stream rounded border border-zinc-800 bg-zinc-950 p-3"></div>
+{% endblock %}

@@ -125,6 +125,25 @@ def _vision_summary(conn: sqlite3.Connection, days: int) -> dict[str, int]:
     return {"count": len(rows), "input_tokens": in_tok, "output_tokens": out_tok}
 
 
+def summary(days: int = 7) -> dict[str, Any]:
+    """Public dict-returning summary for the web UI.
+
+    Returns the combined agent/tool/vision shape the CLI report renders.
+    `main()` calls this and prints; web routes use the dict directly.
+    """
+    conn = _open()
+    agent = _agent_summary(conn, days)
+    tools = _tool_usage(conn, days)
+    vision = _vision_summary(conn, days)
+    return {
+        "days": days,
+        "agent": agent,
+        "tools_top": tools.most_common(15),
+        "tools_total": sum(tools.values()),
+        "vision": vision,
+    }
+
+
 def _print_block(title: str) -> None:
     print()
     print(f"── {title} ".ljust(60, "─"))

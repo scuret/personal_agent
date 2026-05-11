@@ -268,6 +268,167 @@ def section_conversation_lengths(conn: sqlite3.Connection, days: int) -> None:
         print(f"    {src:<10}  {len(c):>4} convs, avg {sum(c) / len(c):.1f} msgs")
 
 
+# ─── Public data API (used by the web UI) ─────────────────────────────────
+
+
+def analytics_data(days: int = 7, slow_ms: int = 15000) -> dict[str, Any]:
+    """Dict-returning version of the CLI analytics, for the web UI.
+
+    Doesn't print; returns a structured snapshot that templates render.
+    The CLI `section_*` functions still print their own format; this
+    shares the underlying queries by re-running them in a structured
+    way. Some SQL duplication is intentional — keeps the CLI's
+    bar-chart aesthetics independent of the web's data model.
+    """
+    conn = _open()
+    cutoff = _cutoff(days)
+
+    convs = conn.execute(
+        "SELECT COUNT(*) AS c FROM conversations WHERE started_at >= ?", (cutoff,)
+    ).fetchone()["c"]
+    msgs = conn.execute(
+        "SELECT COUNT(*) AS c, "
+        "       SUM(CASE WHEN role='user' THEN 1 ELSE 0 END) AS u, "
+        "       SUM(CASE WHEN role='assistant' THEN 1 ELSE 0 END) AS a "
+        "  FROM messages WHERE created_at >= ?",
+        (cutoff,),
+    ).fetchone()
+    tool_uses = conn.execute(
+        "SELECT COUNT(*) AS c FROM api_events WHERE kind='tool_use' AND timestamp >= ?",
+        (cutoff,),
+    ).fetchone()["c"]
+    facts_active = conn.execute(
+        "SELECT COUNT(*) AS c FROM facts WHERE is_active = 1"
+    ).fetchone()["c"]
+    reminders_pending = conn.execute(
+        "SELECT COUNT(*) AS c FROM reminders WHERE fired_at IS NULL AND cancelled_at IS NULL"
+    ).fetchone()["c"]
+    reminders_fired = conn.execute(
+        "SELECT COUNT(*) AS c FROM reminders WHERE fired_at >= ?",
+        (cutoff,),
+    ).fetchone()["c"]
+
+    tool_rows = conn.execute(
+        """SELECT json_extract(payload, '$.name') AS name, COUNT(*) AS n
+             FROM api_events
+            WHERE kind = 'tool_use' AND timestamp >= ?
+         GROUP BY name
+         ORDER BY n DESC""",
+        (cutoff,),
+    ).fetchall()
+    tools: list[dict[str, Any]] = []
+    by_server: Counter[str] = Counter()
+    for r in tool_rows:
+        name = r["name"] or "?"
+        n = r["n"]
+        server = "(builtin)"
+        short = name
+        if name.startswith("mcp__"):
+            parts = name.split("__")
+            if len(parts) >= 2:
+                server = parts[1]
+                short = parts[-1]
+        tools.append({"name": name, "server": server, "short": short, "count": n})
+        by_server[server] += n
+
+    hour_rows = conn.execute(
+        """SELECT timestamp FROM api_events
+            WHERE kind = 'user_input' AND timestamp >= ?""",
+        (cutoff,),
+    ).fetchall()
+    by_hour: dict[int, int] = {h: 0 for h in range(24)}
+    by_dow: dict[int, int] = {d: 0 for d in range(7)}
+    for r in hour_rows:
+        try:
+            dt = datetime.fromisoformat(r["timestamp"]).astimezone()
+            by_hour[dt.hour] += 1
+            by_dow[dt.weekday()] += 1
+        except (ValueError, TypeError):
+            continue
+
+    result_rows = conn.execute(
+        """SELECT timestamp, conversation_id, metadata
+             FROM api_events
+            WHERE kind = 'result' AND timestamp >= ?""",
+        (cutoff,),
+    ).fetchall()
+    durations: list[tuple[int, str, str | None]] = []
+    for r in result_rows:
+        try:
+            meta = json.loads(r["metadata"]) if r["metadata"] else {}
+        except (json.JSONDecodeError, TypeError):
+            meta = {}
+        d = int(meta.get("duration_ms") or 0)
+        if d:
+            durations.append((d, r["timestamp"], r["conversation_id"]))
+
+    bucket_edges = [0, 1000, 3000, 5000, 10000, 20000, 30000, 60000, 10**9]
+    bucket_labels = ["<1s", "1-3s", "3-5s", "5-10s", "10-20s", "20-30s", "30-60s", ">60s"]
+    buckets = [0] * (len(bucket_labels))
+    for d, _, _ in durations:
+        for i in range(len(bucket_labels)):
+            if bucket_edges[i] <= d < bucket_edges[i + 1]:
+                buckets[i] += 1
+                break
+    slowest = sorted([d for d in durations if d[0] >= slow_ms], reverse=True)[:5]
+
+    conv_rows = conn.execute(
+        """SELECT c.id, c.source,
+                  (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msg_count
+             FROM conversations c
+            WHERE c.started_at >= ?""",
+        (cutoff,),
+    ).fetchall()
+    counts = [r["msg_count"] for r in conv_rows if r["msg_count"]]
+    by_source: dict[str, list[int]] = defaultdict(list)
+    for r in conv_rows:
+        if r["msg_count"]:
+            by_source[r["source"] or "(none)"].append(r["msg_count"])
+
+    return {
+        "days": days,
+        "slow_ms_threshold": slow_ms,
+        "overview": {
+            "conversations": convs,
+            "messages_total": msgs["c"],
+            "messages_user": msgs["u"] or 0,
+            "messages_assistant": msgs["a"] or 0,
+            "tool_uses": tool_uses,
+            "facts_active": facts_active,
+            "reminders_pending": reminders_pending,
+            "reminders_fired": reminders_fired,
+        },
+        "tools": tools,                             # list[{name, server, short, count}], sorted desc
+        "subagents": [                              # list[{server, count}], sorted desc
+            {"server": s, "count": n} for s, n in by_server.most_common()
+        ],
+        "hour_of_day": by_hour,                     # {0..23: count}
+        "day_of_week": {                            # {Mon..Sun: count}
+            DAY_NAMES[d]: by_dow[d] for d in range(7)
+        },
+        "turn_durations": {
+            "buckets": [
+                {"label": bucket_labels[i], "count": buckets[i]}
+                for i in range(len(bucket_labels))
+            ],
+            "slowest": [
+                {"duration_ms": d, "timestamp": ts, "conversation_id": cid}
+                for d, ts, cid in slowest
+            ],
+        },
+        "conversation_lengths": {
+            "total": len(counts),
+            "avg": (sum(counts) / len(counts)) if counts else 0,
+            "median": sorted(counts)[len(counts) // 2] if counts else 0,
+            "max": max(counts) if counts else 0,
+            "by_source": [
+                {"source": s, "count": len(by_source[s]), "avg_msgs": sum(by_source[s]) / len(by_source[s])}
+                for s in sorted(by_source)
+            ],
+        },
+    }
+
+
 # ─── Main ───────────────────────────────────────────────────────────────────
 
 

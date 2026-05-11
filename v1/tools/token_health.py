@@ -236,18 +236,30 @@ CHECKS: list[tuple[str, Callable[[], dict[str, Any]]]] = [
 _SYM = {"ok": "✓", "fail": "✗", "warn": "⚠", "skip": "-"}
 
 
-def main() -> int:
-    print(f"=== token health — {datetime.now().isoformat(timespec='seconds')} ===\n")
+def run_checks() -> list[dict[str, Any]]:
+    """Public: run every check, return a list of result dicts.
 
-    failed = 0
-    warned = 0
+    Each entry: {name, status, message}. Used by the web UI's
+    observability panel; the CLI main() also drives from this.
+    """
+    results: list[dict[str, Any]] = []
     for name, check_fn in CHECKS:
         try:
             r = check_fn()
         except Exception as e:  # noqa: BLE001
             r = _r("fail", f"check itself errored: {type(e).__name__}: {e}")
+        results.append({"name": name, **r})
+    return results
+
+
+def main() -> int:
+    print(f"=== token health — {datetime.now().isoformat(timespec='seconds')} ===\n")
+
+    failed = 0
+    warned = 0
+    for r in run_checks():
         sym = _SYM.get(r["status"], "?")
-        print(f"  {sym} {name:<32} {r['message']}")
+        print(f"  {sym} {r['name']:<32} {r['message']}")
         if r["status"] == "fail":
             failed += 1
         elif r["status"] == "warn":

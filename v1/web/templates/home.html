@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}dashboard · personal_agent{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+    <!-- Daemon status grid -->
+    <section>
+        <div class="flex items-baseline justify-between mb-3">
+            <h2 class="text-lg font-semibold">daemons</h2>
+            <span class="text-xs text-zinc-500">refreshes every 10s</span>
+        </div>
+        <div id="daemon-grid"
+             class="grid grid-cols-2 md:grid-cols-4 gap-3"
+             hx-get="/daemon/status-fragment"
+             hx-trigger="every 10s"
+             hx-swap="innerHTML">
+            {% for d in daemons %}
+            <div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
+                <div class="flex items-center justify-between">
+                    <span class="font-medium text-sm">{{ d.name }}</span>
+                    {% if d.loaded %}
+                        <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300">
+                            running{% if d.pid %} · pid {{ d.pid }}{% endif %}
+                        </span>
+                    {% else %}
+                        <span class="text-xs px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-300">
+                            down
+                        </span>
+                    {% endif %}
+                </div>
+                <div class="mt-3 flex gap-2 text-xs">
+                    <button hx-post="/daemon/{{ d.name }}/restart"
+                            hx-swap="none"
+                            class="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700">restart</button>
+                    <a href="/observability/logs/{{ d.name }}"
+                       class="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700">logs</a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+
+    <!-- Two-column row: today's cost + upcoming fires -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+        <section class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-5">
+            <h2 class="text-sm uppercase tracking-wider text-zinc-400">last 24h</h2>
+            <div class="mt-3 flex items-baseline gap-2">
+                <span class="text-3xl font-semibold">${{ "%.2f"|format(cost.cost) }}</span>
+                <span class="text-zinc-500 text-sm">across {{ cost.turns }} turn{{ "" if cost.turns == 1 else "s" }}</span>
+            </div>
+            <div class="mt-2 text-xs text-zinc-500">
+                input {{ "{:,}".format(cost.input_tokens) }} · output {{ "{:,}".format(cost.output_tokens) }} tokens
+            </div>
+            <a href="/observability/cost" class="inline-block mt-4 text-xs text-zinc-400 hover:text-zinc-200">
+                full cost report →
+            </a>
+        </section>
+
+        <section class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-5">
+            <h2 class="text-sm uppercase tracking-wider text-zinc-400">upcoming fires</h2>
+            <ul class="mt-3 space-y-2 text-sm">
+                {% for f in next_fires %}
+                <li class="flex justify-between text-zinc-200">
+                    <span>{{ f.name }}</span>
+                    <span class="text-zinc-500">{{ f.when }}</span>
+                </li>
+                {% else %}
+                <li class="text-zinc-500 text-sm">no scheduled fires (or scheduler offline)</li>
+                {% endfor %}
+            </ul>
+            <div class="mt-4 flex flex-wrap gap-2 text-xs">
+                <button hx-post="/trigger/morning_brief" hx-swap="none"
+                        class="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700">fire brief now</button>
+                <button hx-post="/trigger/weekly_review" hx-swap="none"
+                        class="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700">fire weekly review</button>
+                <button hx-post="/trigger/delivery_watch" hx-swap="none"
+                        class="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700">check deliveries</button>
+                <button hx-post="/trigger/email_watch" hx-swap="none"
+                        class="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700">check email</button>
+            </div>
+        </section>
+    </div>
+
+    <!-- Pending reminders -->
+    <section>
+        <div class="flex items-baseline justify-between mb-3">
+            <h2 class="text-lg font-semibold">pending reminders</h2>
+            <a href="/reminders" class="text-xs text-zinc-400 hover:text-zinc-200">all →</a>
+        </div>
+        {% if pending_reminders %}
+        <ul class="divide-y divide-zinc-800 border border-zinc-800 rounded-lg overflow-hidden">
+            {% for r in pending_reminders %}
+            <li class="px-4 py-3 bg-zinc-900/40 flex justify-between items-baseline">
+                <span class="text-sm">{{ r.message }}</span>
+                <span class="text-xs text-zinc-500 mono">{{ r.fire_at }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-zinc-500 text-sm">no pending reminders.</p>
+        {% endif %}
+    </section>
+
+    <!-- Recent conversations -->
+    <section>
+        <div class="flex items-baseline justify-between mb-3">
+            <h2 class="text-lg font-semibold">recent conversations</h2>
+            <a href="/history" class="text-xs text-zinc-400 hover:text-zinc-200">all →</a>
+        </div>
+        {% if recent_convs %}
+        <ul class="divide-y divide-zinc-800 border border-zinc-800 rounded-lg overflow-hidden">
+            {% for c in recent_convs %}
+            <li class="px-4 py-3 bg-zinc-900/40 flex justify-between items-baseline">
+                <a href="/history/{{ c.id }}" class="text-sm hover:text-zinc-50">
+                    <span class="mono text-xs text-zinc-500">{{ c.id[:8] }}…</span>
+                    <span class="ml-2 text-zinc-400">{{ c.source }}</span>
+                    <span class="ml-2 text-zinc-500 text-xs">· {{ c.msg_count }} msgs</span>
+                </a>
+                <span class="text-xs text-zinc-500 mono">{{ c.started_at[:19] }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-zinc-500 text-sm">no conversations archived yet.</p>
+        {% endif %}
+    </section>
+
+</div>
+{% endblock %}

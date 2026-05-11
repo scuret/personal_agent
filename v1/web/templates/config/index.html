@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}config · personal_agent{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-6">config</h1>
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <a href="/config/triggers"
+       class="block p-5 rounded-lg border {{ 'border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70' if triggers_exists else 'border-zinc-900 bg-zinc-950 opacity-50 pointer-events-none' }}">
+        <h2 class="text-lg font-semibold">⏰ triggers.yaml</h2>
+        <p class="text-sm text-zinc-400 mt-1">email watch, delivery watch, scheduled briefings.</p>
+        <p class="text-xs text-emerald-400 mt-2">scheduler reloads every 30s — no restart</p>
+        {% if not triggers_exists %}<p class="text-xs text-rose-300 mt-1">file missing</p>{% endif %}
+    </a>
+    <a href="/config/personality"
+       class="block p-5 rounded-lg border {{ 'border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70' if personality_exists else 'border-zinc-900 bg-zinc-950 opacity-50 pointer-events-none' }}">
+        <h2 class="text-lg font-semibold">🎭 personality.md</h2>
+        <p class="text-sm text-zinc-400 mt-1">voice, hard rules, image flow, email-watch handoff.</p>
+        <p class="text-xs text-amber-300 mt-2">requires relay + scheduler restart</p>
+    </a>
+    <a href="/config/env"
+       class="block p-5 rounded-lg border {{ 'border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70' if env_exists else 'border-zinc-900 bg-zinc-950 opacity-50 pointer-events-none' }}">
+        <h2 class="text-lg font-semibold">🔑 .env</h2>
+        <p class="text-sm text-zinc-400 mt-1">api keys, transport, timezone, model.</p>
+        <p class="text-xs text-amber-300 mt-2">requires daemon restart on any change</p>
+        {% if not env_exists %}<p class="text-xs text-rose-300 mt-1">file missing</p>{% endif %}
+    </a>
+</div>
+{% endblock %}

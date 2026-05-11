@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block title %}analytics · personal_agent{% endblock %}
+{% block content %}
+
+<div class="flex items-baseline justify-between mb-6">
+    <h1 class="text-2xl font-semibold">analytics — last {{ days }} day{{ "" if days == 1 else "s" }}</h1>
+    <div class="flex gap-2 text-sm">
+        {% for d in [1, 7, 30, 90] %}
+        <a href="?days={{ d }}"
+           class="px-3 py-1.5 rounded {{ 'bg-zinc-700' if days == d else 'bg-zinc-800 hover:bg-zinc-700' }}">{{ d }}d</a>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Overview tiles -->
+<section class="mb-8">
+    <h2 class="text-lg font-semibold mb-3">overview</h2>
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+        {% set ov = data.overview %}
+        {% for label, value in [
+            ('conversations', ov.conversations),
+            ('messages', ov.messages_total ~ ' (user ' ~ ov.messages_user ~ ' / asst ' ~ ov.messages_assistant ~ ')'),
+            ('tool calls', ov.tool_uses),
+            ('active facts', ov.facts_active),
+            ('reminders pending', ov.reminders_pending),
+            ('reminders fired (window)', ov.reminders_fired),
+        ] %}
+        <div class="rounded border border-zinc-800 p-3">
+            <div class="text-xs uppercase text-zinc-500">{{ label }}</div>
+            <div class="text-lg mt-1">{{ value }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+
+<!-- Sub-agent usage -->
+{% if data.subagents %}
+<section class="mb-8">
+    <h2 class="text-lg font-semibold mb-3">sub-agent usage</h2>
+    {% set max_n = data.subagents[0].count %}
+    <div class="space-y-1">
+        {% for s in data.subagents %}
+        <div class="flex items-center gap-3 text-sm">
+            <div class="w-32 text-zinc-400">{{ s.server }}</div>
+            <div class="flex-1 h-2 bg-zinc-900 rounded overflow-hidden">
+                <div class="h-full bg-emerald-500/70"
+                     style="width: {{ (100 * s.count / max_n) | round(1) }}%"></div>
+            </div>
+            <div class="w-16 text-right mono text-xs text-zinc-400">{{ s.count }}</div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+<!-- Tools (top 20) -->
+{% if data.tools %}
+<section class="mb-8">
+    <h2 class="text-lg font-semibold mb-3">tools (top 20)</h2>
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="text-left text-zinc-500 text-xs uppercase border-b border-zinc-800">
+                <th class="py-2">server</th>
+                <th class="py-2">tool</th>
+                <th class="py-2 text-right">calls</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in data.tools[:20] %}
+            <tr class="border-b border-zinc-900">
+                <td class="py-2 text-zinc-400 mono text-xs">{{ t.server }}</td>
+                <td class="py-2 mono text-xs">{{ t.short }}</td>
+                <td class="py-2 text-right">{{ t.count }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+<!-- Hour-of-day + day-of-week (two columns) -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+    <section>
+        <h2 class="text-lg font-semibold mb-3">user messages — hour of day (local)</h2>
+        {% set max_h = data.hour_of_day.values() | max %}
+        <div class="space-y-1">
+            {% for h in range(24) %}
+            {% set n = data.hour_of_day[h] %}
+            <div class="flex items-center gap-3 text-sm">
+                <div class="w-12 text-zinc-500 mono text-xs">{{ "%02d"|format(h) }}:00</div>
+                <div class="flex-1 h-2 bg-zinc-900 rounded overflow-hidden">
+                    <div class="h-full bg-sky-500/70"
+                         style="width: {{ (100 * n / max_h) | round(1) if max_h > 0 else 0 }}%"></div>
+                </div>
+                <div class="w-10 text-right mono text-xs text-zinc-500">{{ n }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    <section>
+        <h2 class="text-lg font-semibold mb-3">user messages — day of week (local)</h2>
+        {% set max_d = data.day_of_week.values() | max %}
+        <div class="space-y-1">
+            {% for name, n in data.day_of_week.items() %}
+            <div class="flex items-center gap-3 text-sm">
+                <div class="w-12 text-zinc-500 mono text-xs">{{ name }}</div>
+                <div class="flex-1 h-2 bg-zinc-900 rounded overflow-hidden">
+                    <div class="h-full bg-sky-500/70"
+                         style="width: {{ (100 * n / max_d) | round(1) if max_d > 0 else 0 }}%"></div>
+                </div>
+                <div class="w-10 text-right mono text-xs text-zinc-500">{{ n }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+</div>
+
+<!-- Turn-duration buckets -->
+<section class="mb-8">
+    <h2 class="text-lg font-semibold mb-3">turn duration distribution</h2>
+    {% set max_b = data.turn_durations.buckets | map(attribute='count') | max %}
+    <div class="space-y-1">
+        {% for b in data.turn_durations.buckets %}
+        <div class="flex items-center gap-3 text-sm">
+            <div class="w-16 text-zinc-400 mono text-xs">{{ b.label }}</div>
+            <div class="flex-1 h-2 bg-zinc-900 rounded overflow-hidden">
+                <div class="h-full bg-amber-500/70"
+                     style="width: {{ (100 * b.count / max_b) | round(1) if max_b > 0 else 0 }}%"></div>
+            </div>
+            <div class="w-10 text-right mono text-xs text-zinc-500">{{ b.count }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    {% if data.turn_durations.slowest %}
+    <h3 class="text-sm font-medium mt-5 mb-2 text-zinc-300">slowest 5 (over {{ data.slow_ms_threshold }}ms)</h3>
+    <ul class="text-sm space-y-1">
+        {% for s in data.turn_durations.slowest %}
+        <li class="flex justify-between border-b border-zinc-900 py-1">
+            <span class="mono text-xs">{{ (s.duration_ms / 1000) | round(1) }}s</span>
+            <span class="mono text-xs text-zinc-400">{{ s.timestamp[:19] }}</span>
+            <a href="/history/{{ s.conversation_id }}"
+               class="mono text-xs text-zinc-500 hover:text-zinc-300">{{ (s.conversation_id or '')[:8] }}…</a>
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</section>
+
+<!-- Conversation length distribution -->
+<section>
+    <h2 class="text-lg font-semibold mb-3">conversation lengths</h2>
+    {% set cl = data.conversation_lengths %}
+    <div class="grid grid-cols-4 gap-3 text-sm mb-3">
+        {% for label, value in [
+            ('total convs', cl.total),
+            ('avg msgs', cl.avg|round(1)),
+            ('median', cl.median),
+            ('max', cl.max),
+        ] %}
+        <div class="rounded border border-zinc-800 p-3">
+            <div class="text-xs uppercase text-zinc-500">{{ label }}</div>
+            <div class="text-lg mt-1">{{ value }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="text-left text-zinc-500 text-xs uppercase border-b border-zinc-800">
+                <th class="py-2">source</th>
+                <th class="py-2 text-right">convs</th>
+                <th class="py-2 text-right">avg msgs</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in cl.by_source %}
+            <tr class="border-b border-zinc-900">
+                <td class="py-2">{{ s.source }}</td>
+                <td class="py-2 text-right">{{ s.count }}</td>
+                <td class="py-2 text-right">{{ s.avg_msgs | round(1) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

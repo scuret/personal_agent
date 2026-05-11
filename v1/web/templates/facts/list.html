@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}facts · personal_agent{% endblock %}
+{% block content %}
+
+<div class="flex items-baseline justify-between mb-6">
+    <h1 class="text-2xl font-semibold">facts <span class="text-zinc-500 text-base font-normal">· {{ total }} active</span></h1>
+    <p class="text-xs text-zinc-500">read-only in Phase 1 — CRUD coming</p>
+</div>
+
+{% if by_category %}
+<div class="space-y-6">
+    {% for category, facts in by_category.items() %}
+    <section>
+        <h2 class="text-sm uppercase tracking-wider text-zinc-400 mb-2">{{ category }} <span class="text-zinc-600">· {{ facts|length }}</span></h2>
+        <ul class="divide-y divide-zinc-800 border border-zinc-800 rounded-lg overflow-hidden">
+            {% for f in facts %}
+            <li class="px-4 py-3 bg-zinc-900/40">
+                <div class="text-sm">{{ f.content }}</div>
+                <div class="mt-1 text-xs text-zinc-500 flex gap-3">
+                    <span class="mono">#{{ f.id }}</span>
+                    <span>logged: {{ f.created_at[:19] }}</span>
+                    {% if f.recall_count and f.recall_count > 0 %}
+                    <span>recalled {{ f.recall_count }}×</span>
+                    {% endif %}
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+    </section>
+    {% endfor %}
+</div>
+{% else %}
+<p class="text-zinc-500">no facts logged yet.</p>
+{% endif %}
+{% endblock %}

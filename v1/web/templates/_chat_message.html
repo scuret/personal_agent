@@ -1,0 +1,26 @@
+{# A single archived message — rendered on initial page load. #}
+{% set is_user = m.role == 'user' %}
+<div class="rounded-lg border {{ 'border-sky-900 bg-sky-950/30' if is_user else 'border-zinc-800 bg-zinc-900/40' }} p-4">
+    <div class="flex items-baseline justify-between mb-1">
+        <span class="text-xs uppercase tracking-wider font-medium
+                     {{ 'text-sky-300' if is_user else 'text-zinc-400' }}">
+            {{ 'you' if is_user else 'agent' }}
+        </span>
+        <span class="text-xs mono text-zinc-500">{{ m.created_at[:19] }}</span>
+    </div>
+    {% if m.content %}
+    <div class="text-sm whitespace-pre-wrap">{{ m.content }}</div>
+    {% endif %}
+    {% if m.tool_calls_parsed %}
+    <details class="mt-2">
+        <summary class="text-xs text-zinc-500 cursor-pointer hover:text-zinc-300">
+            {{ m.tool_calls_parsed|length }} tool call{{ 's' if m.tool_calls_parsed|length != 1 else '' }}
+        </summary>
+        <div class="mt-2 space-y-1">
+            {% for tc in m.tool_calls_parsed %}
+            <div class="text-xs mono text-emerald-300">{{ tc.name }}</div>
+            {% endfor %}
+        </div>
+    </details>
+    {% endif %}
+</div>

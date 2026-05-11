@@ -1,0 +1,34 @@
+/* App-specific overrides on top of Tailwind. Keep this tiny — almost
+ * everything visual should be Tailwind utility classes in the templates. */
+
+/* HTMX adds .htmx-request to the triggering element while a request is
+ * in flight. Use it to dim buttons / disable pointer events. */
+.htmx-request {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+/* HTMX swap transitions: fade-in for tile refreshes / list updates. */
+.htmx-swapping {
+    opacity: 0;
+    transition: opacity 80ms ease-out;
+}
+.htmx-settling {
+    opacity: 1;
+    transition: opacity 200ms ease-out;
+}
+
+/* Monospaced text for IDs, timestamps, log lines. */
+code, pre, .mono {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* Pre blocks for log tails — keep lines from wrapping, scroll horizontally. */
+.log-stream {
+    white-space: pre;
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 60vh;
+    font-size: 12px;
+    line-height: 1.45;
+}

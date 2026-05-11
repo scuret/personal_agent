@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}observability · personal_agent{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-6">observability</h1>
+
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <a href="/observability/cost" class="block p-5 rounded-lg border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70">
+        <h2 class="text-lg font-semibold">💰 cost report</h2>
+        <p class="text-sm text-zinc-400 mt-1">spend, tokens, top expensive turns. last 7 days by default.</p>
+    </a>
+    <a href="/observability/analytics" class="block p-5 rounded-lg border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70">
+        <h2 class="text-lg font-semibold">📊 analytics</h2>
+        <p class="text-sm text-zinc-400 mt-1">activity by hour/day, sub-agent usage, slow turns, conversation lengths.</p>
+    </a>
+    <a href="/observability/tokens" class="block p-5 rounded-lg border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70">
+        <h2 class="text-lg font-semibold">🔑 token health</h2>
+        <p class="text-sm text-zinc-400 mt-1">live validation of every configured API key. re-runs on page load.</p>
+    </a>
+    <div class="block p-5 rounded-lg border border-zinc-800 bg-zinc-900/40">
+        <h2 class="text-lg font-semibold">📜 logs</h2>
+        <p class="text-sm text-zinc-400 mt-1">live-tailed daemon logs (SSE).</p>
+        <div class="mt-2 flex flex-wrap gap-2">
+            {% for d in daemons %}
+            <a href="/observability/logs/{{ d }}"
+               class="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700">{{ d }}</a>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

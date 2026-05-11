@@ -6,6 +6,15 @@ What's shipped, what's planned, and what each planned item needs to actually lan
 
 19 sub-agents currently live: **memory, archive (aggregate analytics), todoist, gmail, calendar (read + write), drive, docs, sheets, weather, vision, notion, github, web (Brave search + URL fetch), youtube, dropbox, spotify, wikipedia, reddit (public read), reminders.**
 
+Plus a **local admin web UI** at `http://127.0.0.1:8770`:
+- FastAPI + Jinja2 + HTMX + Tailwind via CDN. No Node toolchain, no build step.
+- Dashboard (daemon status, today's spend, pending reminders, upcoming fires, one-click trigger buttons)
+- Web chat surface with SSE streaming, conversation continuity (shared archive with iMessage / Telegram / scheduler)
+- History browser with per-conversation message threads + tool-call inspection
+- Observability: cost report, behavioral analytics (hour/day, tools, slow turns, lengths), live token health, SSE-tailed daemon logs
+- In-browser editors for `triggers.yaml` (live reload), `personality.md` (restart required), `.env` (secret-masked, restart required)
+- Auto-started via `com.personal-agent.web` LaunchAgent
+
 Plus operational tooling and infrastructure:
 - iMessage relay (contact + self mode, attributedBody decoder for DND-suppressed messages)
 - Telegram relay (alternative transport, allowlisted user IDs, image-attachment support)

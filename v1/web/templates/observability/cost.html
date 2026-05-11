@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}cost · personal_agent{% endblock %}
+{% block content %}
+
+<div class="flex items-baseline justify-between mb-6">
+    <h1 class="text-2xl font-semibold">cost report — last {{ days }} day{{ "" if days == 1 else "s" }}</h1>
+    <form class="flex gap-2 text-sm">
+        {% for d in [1, 7, 30, 90] %}
+        <a href="?days={{ d }}"
+           class="px-3 py-1.5 rounded {{ 'bg-zinc-700' if days == d else 'bg-zinc-800 hover:bg-zinc-700' }}">
+           {{ d }}d
+        </a>
+        {% endfor %}
+    </form>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+    <div class="rounded-lg border border-zinc-800 p-4">
+        <div class="text-xs uppercase text-zinc-500">spend</div>
+        <div class="text-2xl font-semibold mt-1">${{ "%.4f"|format(data.agent.total_cost) }}</div>
+    </div>
+    <div class="rounded-lg border border-zinc-800 p-4">
+        <div class="text-xs uppercase text-zinc-500">turns</div>
+        <div class="text-2xl font-semibold mt-1">{{ data.agent.turn_count }}</div>
+    </div>
+    <div class="rounded-lg border border-zinc-800 p-4">
+        <div class="text-xs uppercase text-zinc-500">input tokens</div>
+        <div class="text-2xl font-semibold mt-1">{{ "{:,}".format(data.agent.input_tokens) }}</div>
+    </div>
+    <div class="rounded-lg border border-zinc-800 p-4">
+        <div class="text-xs uppercase text-zinc-500">output tokens</div>
+        <div class="text-2xl font-semibold mt-1">{{ "{:,}".format(data.agent.output_tokens) }}</div>
+    </div>
+</div>
+
+<section class="mb-8">
+    <h2 class="text-lg font-semibold mb-3">daily breakdown</h2>
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="text-left text-zinc-500 text-xs uppercase border-b border-zinc-800">
+                <th class="py-2">date</th>
+                <th class="py-2">turns</th>
+                <th class="py-2">spend</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for day, d in data.agent.by_day | dictsort %}
+            <tr class="border-b border-zinc-900">
+                <td class="py-2 mono">{{ day }}</td>
+                <td class="py-2">{{ d.turns }}</td>
+                <td class="py-2">${{ "%.4f"|format(d.cost) }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="3" class="py-4 text-zinc-500">no turns in this window.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+
+{% if data.tools_top %}
+<section class="mb-8">
+    <h2 class="text-lg font-semibold mb-3">top tools (by call count)</h2>
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="text-left text-zinc-500 text-xs uppercase border-b border-zinc-800">
+                <th class="py-2">tool</th>
+                <th class="py-2 text-right">calls</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for name, n in data.tools_top %}
+            <tr class="border-b border-zinc-900">
+                <td class="py-2 mono text-xs">{{ name }}</td>
+                <td class="py-2 text-right">{{ n }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+{% if data.vision.count %}
+<section class="mb-8">
+    <h2 class="text-lg font-semibold mb-3">vision calls (separate from agent turns)</h2>
+    <div class="grid grid-cols-3 gap-4 text-sm">
+        <div class="rounded border border-zinc-800 p-3">
+            <div class="text-xs text-zinc-500">calls</div>
+            <div class="text-lg">{{ data.vision.count }}</div>
+        </div>
+        <div class="rounded border border-zinc-800 p-3">
+            <div class="text-xs text-zinc-500">input tokens</div>
+            <div class="text-lg">{{ "{:,}".format(data.vision.input_tokens) }}</div>
+        </div>
+        <div class="rounded border border-zinc-800 p-3">
+            <div class="text-xs text-zinc-500">output tokens</div>
+            <div class="text-lg">{{ "{:,}".format(data.vision.output_tokens) }}</div>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+{% if data.agent.top_expensive %}
+<section>
+    <h2 class="text-lg font-semibold mb-3">top 5 most expensive turns</h2>
+    <ul class="space-y-1 text-sm">
+        {% for cost, ts, cid in data.agent.top_expensive %}
+        <li class="flex justify-between border-b border-zinc-900 py-2">
+            <span class="mono text-xs text-zinc-400">{{ ts[:19] }}</span>
+            <span class="mono text-xs text-zinc-500">{{ (cid or '')[:8] }}…</span>
+            <span class="font-medium">${{ "%.4f"|format(cost) }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}
+{% endblock %}

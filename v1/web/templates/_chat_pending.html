@@ -1,0 +1,27 @@
+{# Rendered when the user submits — shows their bubble immediately,
+   then a placeholder assistant bubble that subscribes to the SSE
+   stream and appends each text chunk as it arrives. #}
+
+<div class="rounded-lg border border-sky-900 bg-sky-950/30 p-4">
+    <div class="flex items-baseline justify-between mb-1">
+        <span class="text-xs uppercase tracking-wider font-medium text-sky-300">you</span>
+        <span class="text-xs mono text-zinc-500">{{ now }}</span>
+    </div>
+    <div class="text-sm whitespace-pre-wrap">{{ user_text }}</div>
+</div>
+
+<div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4"
+     hx-ext="sse"
+     sse-connect="/chat/{{ conversation_id }}/stream?text={{ user_text | urlencode }}"
+     sse-close="done">
+    <div class="flex items-baseline justify-between mb-1">
+        <span class="text-xs uppercase tracking-wider font-medium text-zinc-400">agent</span>
+        <span class="text-xs mono text-zinc-500" sse-swap="done"></span>
+    </div>
+    <div class="text-sm whitespace-pre-wrap"
+         sse-swap="text"
+         hx-swap="beforeend"></div>
+    <div class="mt-2 text-xs text-emerald-300 mono"
+         sse-swap="tool"
+         hx-swap="beforeend"></div>
+</div>

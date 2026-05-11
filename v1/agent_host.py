@@ -495,6 +495,63 @@ async def process_turn(
     return "\n".join(reply_chunks)
 
 
+async def process_turn_stream(
+    client: ClaudeSDKClient,
+    store: MemoryStore,
+    conversation_id: str,
+    user_text: str,
+):
+    """Same as process_turn but yields text chunks as they arrive.
+
+    Used by the web chat SSE endpoint. Archives every message + tool
+    call + result event identically to process_turn so the conversation
+    archive is consistent across transports. The async generator yields
+    dicts with `{"event": "text"|"tool"|"done", ...}` payloads — the
+    web route translates them to SSE frames.
+    """
+    store.append_message(conversation_id, "user", user_text)
+    store.log_api_event("user_input", user_text, conversation_id)
+
+    await client.query(user_text)
+
+    accumulated: list[str] = []
+    async for message in client.receive_response():
+        text = _extract_text(message)
+        tool_calls = _extract_tool_calls(message)
+
+        if text or tool_calls:
+            store.append_message(
+                conversation_id,
+                "assistant",
+                text or "",
+                tool_calls=tool_calls or None,
+            )
+            if text:
+                store.log_api_event("assistant_text", text, conversation_id)
+                accumulated.append(text)
+                yield {"event": "text", "text": text}
+            for tc in tool_calls:
+                store.log_api_event("tool_use", tc, conversation_id)
+                yield {"event": "tool", "name": tc.get("name", "?")}
+
+        if isinstance(message, ResultMessage):
+            meta: dict[str, Any] = {}
+            for attr in ("total_cost_usd", "duration_ms", "num_turns"):
+                v = getattr(message, attr, None)
+                if v is not None:
+                    meta[attr] = v
+            usage = getattr(message, "usage", None)
+            if usage is not None:
+                if isinstance(usage, dict):
+                    meta["usage"] = usage
+                elif hasattr(usage, "__dict__"):
+                    meta["usage"] = usage.__dict__
+                else:
+                    meta["usage"] = str(usage)
+            store.log_api_event("result", str(message), conversation_id, metadata=meta)
+            yield {"event": "done", "cost_usd": meta.get("total_cost_usd"), "duration_ms": meta.get("duration_ms")}
+
+
 async def _read_user_input(prompt: str) -> str | None:
     """Read a line from stdin without blocking the event loop."""
     loop = asyncio.get_running_loop()

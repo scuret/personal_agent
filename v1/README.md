@@ -45,6 +45,31 @@ Plus: **scheduled morning brief** (~7:30 AM) and **Sunday weekly review** (8 PM)
 
 ---
 
+## Web admin UI
+
+A local-only web UI ships alongside the daemons. Open
+`http://127.0.0.1:8770` (auto-started by the `com.personal-agent.web`
+LaunchAgent) and you get:
+
+- **Dashboard** — daemon status, last-24h spend, pending reminders, recent conversations, upcoming brief fires, one-click trigger buttons
+- **Chat** — talk to the agent in a browser. Streamed SSE responses, conversation continuity (4h gap window), shared archive with iMessage / Telegram / scheduler
+- **History** — browse + search the conversation archive; per-conversation message thread with tool calls expanded
+- **Observability** — cost report, behavioral analytics (activity by hour/day, sub-agent usage, slow turns), token-health check, live-tailed daemon logs (SSE)
+- **Config** — in-browser editors for `triggers.yaml` (live reload, no restart), `personality.md` (restart required), `.env` (secret-masked, restart required)
+- **Facts + Reminders** — read-only viewers for now (CRUD in Phase 2 of the UI roadmap)
+
+Stack: FastAPI + Jinja2 + HTMX + Tailwind via CDN. No Node toolchain,
+no build step — clone the repo and it just runs after `./install.sh`.
+Bound to `127.0.0.1` only; no auth boundary needed.
+
+Manual dev start (without the LaunchAgent):
+
+```bash
+.venv/bin/uvicorn web.app:app --host 127.0.0.1 --port 8770 --reload
+```
+
+---
+
 ## Safety contract
 
 Three hard rules, enforced in three places (system prompt + tool surface + SDK pre-tool hook):
@@ -114,11 +139,19 @@ v1/
 ├── tools/
 │   ├── cost_report.py        # Anthropic spend / token usage report
 │   └── rotate_logs.py        # Daily log rotation
+├── web/                       # local admin UI (FastAPI + Jinja2 + HTMX)
+│   ├── app.py                 # FastAPI app + route registration
+│   ├── sessions.py            # ClaudeSDKClient pool for chat continuity
+│   ├── daemon_control.py      # launchctl wrappers (status, restart, tail)
+│   ├── routes/                # one module per page surface
+│   ├── templates/             # Jinja2 templates (base + per-page)
+│   └── static/app.css
 ├── launch_agents/
 │   ├── com.personal-agent.relay.plist          # auto-start the relay
 │   ├── com.personal-agent.scheduler.plist      # auto-start the scheduler
 │   ├── com.personal-agent.log-rotation.plist   # daily at 03:00
-│   ├── install.sh                              # render + load all three
+│   ├── com.personal-agent.web.plist            # auto-start the web UI
+│   ├── install.sh                              # render + load all four
 │   └── uninstall.sh
 ├── config/
 │   ├── personality.md        # editable system-prompt source

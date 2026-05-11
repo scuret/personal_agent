@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}history · personal_agent{% endblock %}
+{% block content %}
+
+<div class="flex items-baseline justify-between mb-6">
+    <h1 class="text-2xl font-semibold">conversation history</h1>
+    <form class="flex gap-2" method="get">
+        <input type="text" name="q" value="{{ q or '' }}"
+               placeholder="search message content…"
+               class="px-3 py-1.5 rounded bg-zinc-900 border border-zinc-800 text-sm w-64">
+        <button class="px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">search</button>
+        {% if q %}<a href="/history" class="px-3 py-1.5 rounded text-zinc-400 hover:text-zinc-200 text-sm">clear</a>{% endif %}
+    </form>
+</div>
+
+{% if convs %}
+<ul class="divide-y divide-zinc-800 border border-zinc-800 rounded-lg overflow-hidden">
+    {% for c in convs %}
+    <li class="px-4 py-3 bg-zinc-900/40 hover:bg-zinc-900/70">
+        <a href="/history/{{ c.id }}" class="flex justify-between items-baseline">
+            <div>
+                <span class="mono text-xs text-zinc-500">{{ c.id[:8] }}…</span>
+                <span class="ml-2 text-sm">{{ c.source or '(no source)' }}</span>
+                {% if c.msg_count is defined %}
+                <span class="ml-2 text-xs text-zinc-500">· {{ c.msg_count }} msgs</span>
+                {% endif %}
+                {% if c.snippet %}
+                <div class="text-xs text-zinc-400 mt-1 line-clamp-1">{{ c.snippet[:140] }}</div>
+                {% endif %}
+            </div>
+            <span class="mono text-xs text-zinc-500">{{ (c.started_at or '')[:19] }}</span>
+        </a>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+<p class="text-zinc-500">no conversations found{% if q %} for query <code>{{ q }}</code>{% endif %}.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{{ conv.id[:8] }} · history · personal_agent{% endblock %}
+{% block content %}
+
+<a href="/history" class="text-sm text-zinc-400 hover:text-zinc-200">← back to history</a>
+
+<header class="mt-3 mb-6">
+    <h1 class="text-xl font-semibold">
+        <span class="mono text-sm text-zinc-500">{{ conv.id }}</span>
+    </h1>
+    <p class="text-sm text-zinc-400 mt-1">
+        source: <span class="text-zinc-200">{{ conv.source }}</span>
+        · started: <span class="mono">{{ conv.started_at[:19] }}</span>
+        {% if conv.ended_at %}· ended: <span class="mono">{{ conv.ended_at[:19] }}</span>{% endif %}
+    </p>
+    {% if conv.metadata %}
+    <pre class="mt-2 text-xs text-zinc-500 bg-zinc-900 rounded p-2 overflow-x-auto">{{ conv.metadata }}</pre>
+    {% endif %}
+</header>
+
+<div class="space-y-3">
+    {% for m in messages %}
+    {% set is_user = m.role == 'user' %}
+    <div class="rounded-lg border {{ 'border-sky-900 bg-sky-950/30' if is_user else 'border-zinc-800 bg-zinc-900/40' }} p-4">
+        <div class="flex items-baseline justify-between mb-2">
+            <span class="text-xs uppercase tracking-wider font-medium
+                         {{ 'text-sky-300' if is_user else 'text-zinc-400' }}">
+                {{ m.role }}
+            </span>
+            <span class="text-xs mono text-zinc-500">{{ m.created_at[:19] }}</span>
+        </div>
+        {% if m.content %}
+        <div class="text-sm whitespace-pre-wrap">{{ m.content }}</div>
+        {% endif %}
+        {% if m.tool_calls_parsed %}
+        <details class="mt-2">
+            <summary class="text-xs text-zinc-500 cursor-pointer hover:text-zinc-300">
+                {{ m.tool_calls_parsed|length }} tool call{{ 's' if m.tool_calls_parsed|length != 1 else '' }}
+            </summary>
+            <div class="mt-2 space-y-2">
+                {% for tc in m.tool_calls_parsed %}
+                <div class="rounded bg-zinc-950 border border-zinc-800 p-3">
+                    <div class="text-xs mono text-emerald-300">{{ tc.name }}</div>
+                    {% if tc.input %}
+                    <pre class="mt-1 text-xs text-zinc-400 whitespace-pre-wrap break-all">{{ tc.input | tojson(indent=2) }}</pre>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </details>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

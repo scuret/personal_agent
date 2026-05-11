@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}reminders · personal_agent{% endblock %}
+{% block content %}
+
+<h1 class="text-2xl font-semibold mb-6">reminders</h1>
+
+<section class="mb-8">
+    <h2 class="text-lg font-semibold mb-3">pending <span class="text-zinc-500 text-sm font-normal">· {{ pending|length }}</span></h2>
+    {% if pending %}
+    <ul class="divide-y divide-zinc-800 border border-zinc-800 rounded-lg overflow-hidden">
+        {% for r in pending %}
+        <li class="px-4 py-3 bg-zinc-900/40 flex items-baseline justify-between">
+            <div>
+                <div class="text-sm">{{ r.message }}</div>
+                <div class="text-xs text-zinc-500 mt-1 flex gap-3">
+                    <span class="mono">#{{ r.id }}</span>
+                    {% if r.recurrence_rule %}<span>recurring: {{ r.recurrence_rule }}</span>{% endif %}
+                </div>
+            </div>
+            <span class="mono text-xs text-zinc-400">{{ r.fire_at }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-zinc-500 text-sm">no pending reminders.</p>
+    {% endif %}
+</section>
+
+{% if recent_fired %}
+<section>
+    <h2 class="text-lg font-semibold mb-3">recently fired</h2>
+    <ul class="divide-y divide-zinc-800 border border-zinc-800 rounded-lg overflow-hidden">
+        {% for r in recent_fired %}
+        <li class="px-4 py-3 bg-zinc-900/40 flex items-baseline justify-between">
+            <div>
+                <div class="text-sm text-zinc-300">{{ r.message }}</div>
+                <div class="text-xs text-zinc-500 mt-1">
+                    <span class="mono">#{{ r.id }}</span>
+                    {% if r.recurrence_rule %} · recurring{% endif %}
+                </div>
+            </div>
+            <span class="mono text-xs text-zinc-500">fired {{ (r.fired_at or '')[:19] }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}
+{% endblock %}
