@@ -1,8 +1,11 @@
 """Dropbox sub-agent — search, list, read, share.
 
 Uses Dropbox's HTTP API v2 (https://api.dropboxapi.com / https://content.dropboxapi.com).
-Auth is a single bearer token from `DROPBOX_ACCESS_TOKEN` in the env.
-Generate one at dropbox.com/developers/apps:
+Auth uses the OAuth refresh-token flow via `mcp_servers.dropbox_auth`,
+which keeps access tokens fresh automatically (4-hour expiry, refreshed
+in-process). See dropbox_auth.py for first-time setup.
+
+App setup at dropbox.com/developers/apps:
   1. "Create app" → Scoped access → Full Dropbox (or App folder if you
      prefer to scope tighter).
   2. Permissions tab — at minimum:
@@ -10,11 +13,10 @@ Generate one at dropbox.com/developers/apps:
        files.content.read
        sharing.read
        sharing.write     (only if you want create_share_link)
-  3. Settings tab → "Generated access token" → Generate. Copy the
-     ~64-character string.
-  4. Note: long-lived tokens are deprecated for new apps; use the
-     short-lived token + refresh flow if your app requires it. For a
-     personal app, the generated token works fine and won't expire.
+  3. Settings tab → copy the App key and App secret into .env as
+     DROPBOX_APP_KEY and DROPBOX_APP_SECRET.
+  4. Run `python -m mcp_servers.dropbox_auth` once at the Mac to do
+     the browser consent and seed the refresh token.
 
 Tools (namespaced as mcp__dropbox__<name>):
 
@@ -28,12 +30,13 @@ Tools (namespaced as mcp__dropbox__<name>):
 from __future__ import annotations
 
 import json
-import os
 from typing import Any
 
 import requests
 from claude_agent_sdk import create_sdk_mcp_server, tool
 from claude_agent_sdk.types import McpSdkServerConfig
+
+from mcp_servers.dropbox_auth import get_access_token
 
 API_BASE = "https://api.dropboxapi.com/2"
 CONTENT_BASE = "https://content.dropboxapi.com/2"
@@ -49,10 +52,7 @@ def _ok(text: str) -> dict[str, Any]:
 
 
 def _token() -> str:
-    t = os.environ.get("DROPBOX_ACCESS_TOKEN", "").strip()
-    if not t:
-        raise RuntimeError("DROPBOX_ACCESS_TOKEN not set in .env")
-    return t
+    return get_access_token()
 
 
 def _post_json(path: str, body: dict[str, Any]) -> Any:

@@ -73,9 +73,27 @@ SUBAGENTS: list[SubAgent] = [
     ),
     SubAgent(
         "calendar",
-        "Read events, search, free/busy",
+        "Read events, search, free/busy, create / update / delete",
         needs_google_oauth=True,
         setup_url="https://console.cloud.google.com (enable Calendar API)",
+    ),
+    SubAgent(
+        "drive",
+        "Search, browse, read text, create share link",
+        needs_google_oauth=True,
+        setup_url="https://console.cloud.google.com (enable Drive API)",
+    ),
+    SubAgent(
+        "docs",
+        "Read, append, find-and-replace, create new docs",
+        needs_google_oauth=True,
+        setup_url="https://console.cloud.google.com (enable Docs API)",
+    ),
+    SubAgent(
+        "sheets",
+        "Read range, append rows, update range, create",
+        needs_google_oauth=True,
+        setup_url="https://console.cloud.google.com (enable Sheets API)",
     ),
     SubAgent(
         "notion",
@@ -108,9 +126,59 @@ SUBAGENTS: list[SubAgent] = [
     SubAgent(
         "dropbox",
         "Search, list, read text, share-link",
-        env_vars=["DROPBOX_ACCESS_TOKEN"],
+        env_vars=["DROPBOX_APP_KEY", "DROPBOX_APP_SECRET"],
         setup_url="https://www.dropbox.com/developers/apps",
-        auth_help="Scoped Access app. Permissions: files.metadata.read, files.content.read, sharing.read.",
+        auth_help=(
+            "Scoped Access app. Permissions: files.metadata.read, "
+            "files.content.read, sharing.read. Settings tab → ADD "
+            "http://localhost:53682 to Redirect URIs (exact match). "
+            "Copy App key and App secret. Then run "
+            "`python -m mcp_servers.dropbox_auth` once to grant access "
+            "and seed the refresh token."
+        ),
+    ),
+    SubAgent(
+        "spotify",
+        "Search, playback, queue, playlists (Premium)",
+        env_vars=["SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"],
+        setup_url="https://developer.spotify.com/dashboard",
+        auth_help=(
+            "Create app → set Redirect URI to http://127.0.0.1:8765 "
+            "exactly. Copy Client ID + Client Secret. Then run "
+            "`python -m mcp_servers.spotify_auth` once to grant access "
+            "and seed the refresh token. Playback control needs Premium."
+        ),
+    ),
+    SubAgent(
+        "canva",
+        "List, get, create, export designs + list folders",
+        env_vars=["CANVA_CLIENT_ID", "CANVA_CLIENT_SECRET"],
+        setup_url="https://developer.canva.com",
+        auth_help=(
+            "Create integration → Authentication → add Redirect URL "
+            "EXACTLY http://127.0.0.1:8767. Configure scopes "
+            "(design:meta:read, design:content:read, "
+            "design:content:write, folder:read, asset:read, "
+            "profile:read). Copy Client ID + Client Secret. Then run "
+            "`python -m mcp_servers.canva_auth` once to grant access "
+            "and seed the refresh token."
+        ),
+    ),
+    SubAgent(
+        "linkedin",
+        "Get profile + create text posts (narrow personal API surface)",
+        env_vars=["LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET"],
+        setup_url="https://www.linkedin.com/developers/apps",
+        auth_help=(
+            "Create app (requires a LinkedIn Page you admin) → Auth "
+            "tab → add Authorized redirect URL EXACTLY "
+            "http://127.0.0.1:8768. Products tab → request 'Sign In "
+            "with LinkedIn using OpenID Connect' + 'Share on LinkedIn' "
+            "(both auto-approved). Copy Client ID + Client Secret. "
+            "Then run `python -m mcp_servers.linkedin_auth` once. "
+            "NOTE: personal-tier tokens don't refresh — re-run every "
+            "~55 days to keep the agent connected."
+        ),
     ),
 ]
 

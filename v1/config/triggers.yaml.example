@@ -44,6 +44,41 @@ email_triggers:
     - time sensitive
     - asap
 
+# Delivery watch
+# ──────────────
+# When a carrier sends an "out for delivery" or "delivered" email,
+# fire a 📦 alert with the carrier name + subject. Distinct from
+# email_triggers above — uses stricter AND logic (carrier sender AND
+# delivery keyword required) so routine "your account was updated"
+# emails from carriers don't ping you.
+#
+# Senders and keywords default to the carriers in scheduler/triggers.py
+# (_DELIVERY_DEFAULT_SENDERS / _DELIVERY_DEFAULT_KEYWORDS) if the lists
+# below are empty. Override only if you want to narrow or extend.
+#
+# Alerted deliveries are also logged as `delivery_today` facts so the
+# morning brief can roll them up without re-querying Gmail.
+
+delivery_watch:
+
+  # Master switch.
+  enabled: true
+
+  # How often to poll Gmail for new carrier emails. Delivery windows
+  # change less frequently than urgency emails, so 30 min is plenty.
+  every_minutes: 30
+
+  # Sender substrings to match (case-insensitive against From: header).
+  # Leave empty to use the defaults: ups.com, fedex.com, amazon.com,
+  # usps.com, informeddelivery.usps.com, dhl.com.
+  senders: []
+
+  # Keywords to require in subject/snippet. Leave empty for defaults:
+  # "out for delivery", "delivering today", "scheduled to deliver
+  # today", "arriving today", "your delivery today", "delivery today",
+  # "delivered".
+  keywords: []
+
 # Scheduled briefings
 # ───────────────────
 # All times are in USER_TIMEZONE from .env.

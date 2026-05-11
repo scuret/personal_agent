@@ -17,14 +17,17 @@ Switch transports any time by editing `.env` and restarting the relay (`launchct
 
 ## Capabilities at a glance
 
-The agent is a single Claude reasoning loop with twelve in-process MCP sub-agents. You text it, it picks the right tools.
+The agent is a single Claude reasoning loop with nineteen in-process MCP sub-agents. You text it, it picks the right tools.
 
 | Sub-agent | What it does | Auth | Free? |
 |---|---|---|---|
 | **memory** | Conversation archive + extracted facts + audit log | Local SQLite | ✅ free |
 | **archive** | Aggregate analytics — counts, top tools, activity by hour/day | Local SQLite | ✅ free |
 | **gmail** | Search, read, draft, archive. **Never sends.** | Google OAuth | ✅ free |
-| **calendar** | Read events, search, free/busy check | Google OAuth | ✅ free |
+| **calendar** | Read events, search, free/busy, **create / update / delete** | Google OAuth | ✅ free |
+| **drive** | Search, browse folders, read text files, create share link | Google OAuth | ✅ free |
+| **docs** | Read, append, find-and-replace, create new docs | Google OAuth | ✅ free |
+| **sheets** | Read range, append rows, update range, create | Google OAuth | ✅ free |
 | **todoist** | List/create/update/complete tasks | API token | ✅ free |
 | **notion** | Search, read, query DBs, create page, append | Integration token | ✅ free |
 | **github** | Repos, issues, PRs, commits, search, create issue | PAT | ✅ free |
@@ -32,7 +35,8 @@ The agent is a single Claude reasoning loop with twelve in-process MCP sub-agent
 | **vision** | Describe iPhone-attached images (HEIC auto-converted) | Anthropic API | metered |
 | **web** | Brave Search + URL fetch | API key | ✅ 2K/mo free |
 | **youtube** | Search + video/channel metadata | API key | ✅ 10K units/day |
-| **dropbox** | Search, list, read text, share-link | Access token | ✅ free |
+| **dropbox** | Search, list, read text, share-link (OAuth refresh flow) | OAuth refresh | ✅ free |
+| **spotify** | Search, playback, queue, playlists, devices | OAuth refresh | ✅ free (playback needs Premium) |
 | **wikipedia** | Search, summary, full article extract | None needed | ✅ free |
 | **reddit** | Subreddit top/hot, search, post + comments | None (public read) | ✅ free |
 | **reminders** | Schedule "remind me at 4pm to..." | None needed | ✅ free |
@@ -200,7 +204,8 @@ Edit `.env` and fill in keys. Only `ANTHROPIC_API_KEY` is strictly required — 
 | `GITHUB_TOKEN` | [github.com/settings/tokens](https://github.com/settings/tokens) | Free | Classic with `repo` scope, or fine-grained with Issues r+w / PRs r / Contents r / Metadata r. |
 | `BRAVE_SEARCH_API_KEY` | [api.search.brave.com](https://api.search.brave.com) → Subscribe Free → API Keys | 2K/mo free | Free tier requires a credit card on file but doesn't charge. |
 | `YOUTUBE_API_KEY` | [console.cloud.google.com](https://console.cloud.google.com) → enable "YouTube Data API v3" → Credentials → API key | 10K units/day free | Search costs 100 units; lookups cost 1. SEPARATE from your Google OAuth credentials.json. |
-| `DROPBOX_ACCESS_TOKEN` | [dropbox.com/developers/apps](https://www.dropbox.com/developers/apps) → Scoped Access app | Free | Permissions: `files.metadata.read`, `files.content.read`, `sharing.read`, optionally `sharing.write`. **Click Submit, then regenerate token after permission changes.** |
+| `DROPBOX_APP_KEY` + `DROPBOX_APP_SECRET` | [dropbox.com/developers/apps](https://www.dropbox.com/developers/apps) → Scoped Access app | Free | Permissions: `files.metadata.read`, `files.content.read`, `sharing.read`, optionally `sharing.write`. After setting permissions, copy App key + App secret from Settings, then run `python -m mcp_servers.dropbox_auth` once for browser consent — caches a refresh token so access never expires. |
+| `SPOTIFY_CLIENT_ID` + `SPOTIFY_CLIENT_SECRET` | [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) → Create app | Free (playback needs Premium) | Add `http://127.0.0.1:8765` to the app's Redirect URIs (literal `127.0.0.1`, not `localhost` — Spotify rejects `localhost` since 2025). Then run `python -m mcp_servers.spotify_auth` for browser consent. |
 
 Google OAuth (Gmail + Calendar) is handled separately — see step 3.
 
@@ -265,11 +270,61 @@ This renders absolute paths into the plists, copies them to `~/Library/LaunchAge
 - `com.personal-agent.scheduler` — long-running scheduler (briefs, reminders, weekly review)
 - `com.personal-agent.log-rotation` — daily at 03:00, rotates daemon logs
 
-To remove:
+To remove the LaunchAgents only (keeps the rest of the install intact):
 
 ```bash
 ./launch_agents/uninstall.sh
 ```
+
+---
+
+## Uninstalling
+
+The interactive uninstaller covers everything from "remove one sub-agent"
+to "wipe the whole install." Mirrors the install flow.
+
+```bash
+# Interactive menu
+python -m tools.uninstall
+
+# Show what's currently installed (sub-agents, LaunchAgents, venv, data)
+python -m tools.uninstall --list
+
+# Remove one or several sub-agents (clears env vars + cached tokens)
+python -m tools.uninstall --sub-agent dropbox
+python -m tools.uninstall --sub-agent canva,linkedin
+
+# Remove LaunchAgents only — stops the daemons, keeps code + data
+python -m tools.uninstall --launchagents
+
+# Wipe local data (sqlite, logs, token caches), keep .env + config
+python -m tools.uninstall --data
+
+# Full uninstall: LaunchAgents + venv + data + .env + config secrets
+python -m tools.uninstall --all                # prompts before destructive steps
+python -m tools.uninstall --all --yes          # no prompts (careful)
+
+# Preview without doing anything
+python -m tools.uninstall --all --dry-run
+```
+
+**What gets removed per sub-agent:**
+
+- Env vars cleared in `.env` (set to empty; comments + structure preserved)
+- Cached token file deleted (e.g. `data/dropbox_token.json`)
+- The Google family (gmail, calendar, drive, docs, sheets) shares one
+  OAuth pickle — the pickle + `config/credentials.json` are only deleted
+  when you remove all 5 in one call (`--sub-agent
+  gmail,calendar,drive,docs,sheets`)
+
+**What the uninstaller never touches:**
+
+- Source code under `v1/` (delete yourself with `rm -rf v1/` when you're
+  truly done)
+- Provider-side OAuth authorizations — the local refresh token is gone,
+  but the app may still be authorized at the service. The uninstaller
+  prints the revocation URL for each sub-agent (e.g. spotify.com/account/apps,
+  myaccount.google.com/permissions). Visit each to fully revoke.
 
 ---
 

@@ -4,7 +4,7 @@ What's shipped, what's planned, and what each planned item needs to actually lan
 
 ## Shipped
 
-15 sub-agents currently live: **memory, archive (aggregate analytics), todoist, gmail, calendar (read), weather, vision, notion, github, web (Brave search + URL fetch), youtube, dropbox, wikipedia, reddit (public read), reminders.**
+19 sub-agents currently live: **memory, archive (aggregate analytics), todoist, gmail, calendar (read + write), drive, docs, sheets, weather, vision, notion, github, web (Brave search + URL fetch), youtube, dropbox, spotify, wikipedia, reddit (public read), reminders.**
 
 Plus operational tooling and infrastructure:
 - iMessage relay (contact + self mode, attributedBody decoder for DND-suppressed messages)
@@ -12,7 +12,12 @@ Plus operational tooling and infrastructure:
 - Pluggable transport via `RELAY_TRANSPORT` + `relay/run.py` dispatcher
 - Recurring reminders (daily / weekdays / weekly / monthly)
 - Rules-based email-watch trigger (sender allowlist + urgency keywords, polled every N minutes)
+- Real-time delivery-watch trigger (UPS / FedEx / Amazon / USPS / DHL — extracts tracking number + carrier-specific URL from the email body, logs as `delivery_today` facts for brief rollup)
+- Email-watch → agent context handoff (`alerted_email` facts so the agent can recall the right email when the principal says "draft a response" from a different session)
 - Morning brief + Sunday weekly review scheduler with wallclock-based catchup (survives Mac sleep)
+- Briefs run on Opus 4.7 (model override per-trigger; relay stays on Sonnet)
+- Todoist hallucination guard for briefs (Python fetches + categorizes by priority/status; the agent surfaces only entries from the injected authoritative block — light paraphrase allowed, invention forbidden)
+- Conversational brief format (lowercase prose openers, weather woven in, email → todo synthesis, "📦 deliveries today:" section, overdue-P1 progress diff vs last fire)
 - Cost dashboard (`tools/cost_report.py`)
 - Behavioral analytics (`tools/analytics.py`)
 - Token health check (`tools/token_health.py`)
@@ -52,33 +57,10 @@ Each item lists what it adds, why it's not in yet, and what unblocks it.
 ### ~~Wikipedia~~ — shipped
 ### ~~Reddit (public read-only)~~ — shipped
 
-### Calendar writes (create / update / delete events)
-- **What:** Extend the existing calendar MCP server with the three write tools we already coded but had to revert.
-- **Why deferred:** Requires re-running the Google OAuth consent flow with `calendar.events` scope (currently only `calendar.readonly`).
-- **Unblocks:** Re-auth at the Mac. The code is in commit history (`905b80c`'s parent — actually it was reverted before commit; needs to be re-implemented per the deferred plan). Run `python -m mcp_servers.google_auth` after updating `SCOPES`.
-- **NOT remote-buildable** (needs browser).
-- **Effort:** ~30 min once at the Mac.
-
-### Drive / Docs / Sheets
-- **What:** Read+write Google Drive (search/list/move), Docs (read/append/replace), Sheets (read/write/append rows).
-- **Why deferred:** Same OAuth re-auth requirement as Calendar writes — needs `drive.file` or broader Drive scopes plus `documents` and `spreadsheets`.
-- **Unblocks:** OAuth scope expansion at the Mac.
-- **NOT remote-buildable.**
-- **Effort:** ~half-day for all three sub-agents.
-
-### Dropbox OAuth refresh flow
-- **What:** Replace short-lived `sl.u.` access tokens (4h expiration) with the OAuth refresh-token flow so Dropbox keeps working indefinitely without re-pasting tokens.
-- **Why deferred:** Browser-based authorization required for the initial consent.
-- **Unblocks:** Implement the refresh flow in `mcp_servers/google_auth.py`-style module specifically for Dropbox; do the consent at the Mac once.
-- **NOT remote-buildable.**
-- **Effort:** ~hour.
-
-### Spotify
-- **What:** Search / play / queue / library / playlist tools. Read access is the most useful piece for a personal agent.
-- **Why deferred:** OAuth flow with browser consent.
-- **Unblocks:** Spotify Developer app registration (web), then a one-time browser OAuth at the Mac.
-- **NOT remote-buildable.**
-- **Effort:** ~hour.
+### ~~Calendar writes~~ — shipped (create / update / delete events on `calendar.events` scope).
+### ~~Drive / Docs / Sheets~~ — shipped (full read/write, single Google OAuth covers all three plus calendar writes).
+### ~~Dropbox OAuth refresh flow~~ — shipped (`mcp_servers/dropbox_auth.py` runs the consent dance and caches a refresh token; access tokens auto-refresh in-process).
+### ~~Spotify~~ — shipped (search / playback / queue / playlists / devices; refresh-token flow via `mcp_servers/spotify_auth.py`).
 
 ### Canva
 - **What:** Create / search / export designs, list folders.
@@ -132,13 +114,41 @@ Each item lists what it adds, why it's not in yet, and what unblocks it.
 - **NOT remote-buildable.**
 - **Effort:** ~half-day end-to-end (account creation, device sign-in, relay reconfiguration).
 
+## Suggestion pile (not yet planned)
+
+Sub-agent ideas surfaced in conversation but not yet scoped onto the
+planned list. Kept here so they don't get dropped between sessions.
+Each entry has enough metadata to scope when promoted to "Planned."
+
+### Apple-native (AppleScript, zero auth — local to the Mac)
+- **Apple Reminders.app** — bridge native iOS/macOS Reminders into the agent. Useful alongside Todoist for the lists that live in Reminders.app (Siri-created reminders, family shared lists). ~hour.
+- **Apple Notes.app** — read/append notes by title. "What did I write in my [X] note?" / "Append this to my running list." ~hour.
+- **Apple Photos.app** — search the local photo library by date or content tag. ~hour.
+- **Apple Music.app** — playback control alongside Spotify if you use both. ~45 min.
+- **Apple Mail.app** — search/draft against non-Gmail accounts if you have any. ~hour.
+
+### Information sources
+- **News headlines** — NYT or AP API; slots into the morning brief as a "what's happening" section. API key, free tier. ~45 min.
+- **Maps / places** — Google Places or OpenStreetMap Nominatim for "nearest X" / "drive time to Y" / "what's open near me." Google needs an API key (free tier); OSM is no-auth. ~hour.
+
+### Finance
+- **SimpleFIN banking** — read-only account balances + recent transactions. Open standard, personal-friendly, flat $1.50/month for all accounts. Could slot into the brief ("checking is at $X, $Y spent on groceries this week"). ~hour.
+
+### Glue / utilities
+- **IFTTT / Zapier webhooks** — generic glue layer for "send my agent X from Y service." Lets you wire any service that supports webhooks. ~45 min.
+- **Pocket / Instapaper** — surface saved-for-later reading; could slot into a weekly review. OAuth. ~hour.
+- **1Password CLI** — search passwords / secure notes via the `op` CLI. Treat carefully — credentials never go into agent output; the agent only confirms presence and surfaces metadata. ~hour.
+
+### Health / wellness
+- **Eight Sleep** — sleep score, HRV, heart rate, respiratory rate, bed/room temp, autopilot status. Slots cleanly into the morning brief ("slept 6h 42m, score 78, HRV down 4 from your week avg"). Uses the community-maintained `pyEight` library — email/password auth with refresh tokens. **Caveat:** unofficial API; could break if Eight Sleep changes endpoints. The sleep-context add to the brief makes it worth the maintenance risk. ~hour.
+
 ## Operational improvements (not sub-agents)
 
 These aren't user-facing capabilities but improve daily use.
 
 - ~~Tighter morning brief / weekly review prompts~~ — shipped (synthetic prompts now have explicit char budgets and "skip empty sections" rule).
 - ~~Tighter replies on very short user messages~~ — shipped (personality.md now requires one-word replies to one-word inputs).
-- **Drop markdown bold (`**...**`) from agent output** — iMessage doesn't render markdown; the asterisks show up as literal characters in the bubble, which looks ugly. Telegram doesn't render them either with our current send path (we use `sendMessage` without `parse_mode`). Update `config/personality.md` to remove the `**bold**` headers convention; update `scheduler/triggers.py` synthetic prompts that reference bold. Replace structured-section headers with plain-text alternatives — line breaks, emoji prefixes (📅 for calendar, ✅ for tasks, 📧 for email), ALL-CAPS line headers, or dashes for items. Pure code. ~10 min.
+- ~~Drop markdown bold from agent output~~ — shipped (folded into the conversational brief rewrite; `personality.md` now bans markdown formatting entirely; brief PROMPTS use lowercase prose openers).
 - ~~Audit-log analytics tool~~ — shipped as `tools/analytics.py`.
 - ~~"Query archive" tool~~ — shipped as the `archive` sub-agent.
 - ~~Recurring reminders~~ — shipped (`remind_recurring` tool with daily / weekdays / weekly / monthly patterns).

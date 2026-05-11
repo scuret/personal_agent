@@ -21,6 +21,11 @@ data/*.db
 data/*.log
 # rotated log backups from tools/rotate_logs.py — they have date suffixes
 data/*.log.*
+# OAuth refresh-token caches (dropbox, spotify, canva, linkedin) — JSON
+# files written by mcp_servers/*_auth.py at consent time. Contain live
+# access + refresh tokens.
+data/*_token.json
+data/*.json
 
 # Python
 __pycache__/

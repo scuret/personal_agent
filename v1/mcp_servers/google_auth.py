@@ -43,10 +43,25 @@ from googleapiclient.discovery import build
 #   label), mark read. Does NOT include the explicit `gmail.send` scope;
 #   even so, the application enforces "no send" by not exposing a send
 #   tool and by the PreToolUse send-block hook in agent_host.
-# - calendar.readonly: list/search/availability for v1 (read-only).
+# - calendar.events: read AND write events on the user's calendars. This
+#   replaces the earlier calendar.readonly — calendar.events includes
+#   the read surface so we don't need both. Doesn't grant access to
+#   create/delete the calendars themselves, just events on them.
+# - drive: full read/write access to Drive files. We use this for the
+#   Drive sub-agent's search, list, read, share-link tools, and as the
+#   transport for creating new Docs and Sheets (which live in Drive).
+#   `drive.file` was rejected because it only sees app-created files,
+#   which makes "find my X spreadsheet" impossible.
+# - documents: full read/write to Google Docs the user owns or has
+#   access to. Powers docs_read/append/replace/create.
+# - spreadsheets: full read/write to Sheets the user owns or has access
+#   to. Powers sheets_read_range/append/update/create.
 SCOPES: list[str] = [
     "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/documents",
+    "https://www.googleapis.com/auth/spreadsheets",
 ]
 
 

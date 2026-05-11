@@ -50,13 +50,19 @@ from claude_agent_sdk.types import HookContext  # noqa: E402
 from memory.store import MemoryStore  # noqa: E402
 from mcp_servers.archive_server import create_archive_mcp_server  # noqa: E402
 from mcp_servers.calendar_server import create_calendar_mcp_server  # noqa: E402
+from mcp_servers.canva_server import create_canva_mcp_server  # noqa: E402
+from mcp_servers.docs_server import create_docs_mcp_server  # noqa: E402
+from mcp_servers.drive_server import create_drive_mcp_server  # noqa: E402
 from mcp_servers.dropbox_server import create_dropbox_mcp_server  # noqa: E402
 from mcp_servers.github_server import create_github_mcp_server  # noqa: E402
 from mcp_servers.gmail_server import create_gmail_mcp_server  # noqa: E402
+from mcp_servers.linkedin_server import create_linkedin_mcp_server  # noqa: E402
 from mcp_servers.memory_server import create_memory_mcp_server  # noqa: E402
 from mcp_servers.notion_server import create_notion_mcp_server  # noqa: E402
 from mcp_servers.reddit_server import create_reddit_mcp_server  # noqa: E402
 from mcp_servers.reminders_server import create_reminders_mcp_server  # noqa: E402
+from mcp_servers.sheets_server import create_sheets_mcp_server  # noqa: E402
+from mcp_servers.spotify_server import create_spotify_mcp_server  # noqa: E402
 from mcp_servers.todoist_server import create_todoist_mcp_server  # noqa: E402
 from mcp_servers.vision_server import create_vision_mcp_server  # noqa: E402
 from mcp_servers.weather_server import create_weather_mcp_server  # noqa: E402
@@ -100,6 +106,54 @@ CALENDAR_TOOLS = [
     "mcp__calendar__calendar_search_events",
     "mcp__calendar__calendar_check_availability",
     "mcp__calendar__calendar_get_event",
+    "mcp__calendar__calendar_create_event",
+    "mcp__calendar__calendar_update_event",
+    "mcp__calendar__calendar_delete_event",
+]
+
+DRIVE_TOOLS = [
+    "mcp__drive__drive_search",
+    "mcp__drive__drive_list_folder",
+    "mcp__drive__drive_get_metadata",
+    "mcp__drive__drive_read_text",
+    "mcp__drive__drive_create_share_link",
+]
+
+DOCS_TOOLS = [
+    "mcp__docs__docs_read",
+    "mcp__docs__docs_append_text",
+    "mcp__docs__docs_replace_text",
+    "mcp__docs__docs_create",
+]
+
+SHEETS_TOOLS = [
+    "mcp__sheets__sheets_read_range",
+    "mcp__sheets__sheets_append_rows",
+    "mcp__sheets__sheets_update_range",
+    "mcp__sheets__sheets_create",
+]
+
+SPOTIFY_TOOLS = [
+    "mcp__spotify__spotify_search",
+    "mcp__spotify__spotify_currently_playing",
+    "mcp__spotify__spotify_play",
+    "mcp__spotify__spotify_pause",
+    "mcp__spotify__spotify_queue",
+    "mcp__spotify__spotify_list_playlists",
+    "mcp__spotify__spotify_list_devices",
+]
+
+CANVA_TOOLS = [
+    "mcp__canva__canva_list_designs",
+    "mcp__canva__canva_get_design",
+    "mcp__canva__canva_create_design",
+    "mcp__canva__canva_export_design",
+    "mcp__canva__canva_list_folders",
+]
+
+LINKEDIN_TOOLS = [
+    "mcp__linkedin__linkedin_get_profile",
+    "mcp__linkedin__linkedin_post_share",
 ]
 
 WEATHER_TOOLS = [
@@ -210,6 +264,61 @@ def _has_google_oauth() -> bool:
     return creds_path.exists()
 
 
+def _has_dropbox_oauth() -> bool:
+    """True iff Dropbox app creds AND a cached refresh token are present.
+
+    Both pieces are required: the app key/secret to talk to the OAuth
+    endpoints, plus the cached refresh_token from the one-time consent
+    flow. If the cache is missing, the sub-agent stays unregistered so
+    the agent doesn't try to call tools that will fail.
+    """
+    if not _has_env("DROPBOX_APP_KEY", "DROPBOX_APP_SECRET"):
+        return False
+    token_raw = os.environ.get("DROPBOX_TOKEN_PATH", "./data/dropbox_token.json")
+    token_path = Path(token_raw)
+    if not token_path.is_absolute():
+        token_path = Path(__file__).parent / token_path
+    return token_path.exists()
+
+
+def _has_spotify_oauth() -> bool:
+    """True iff Spotify app creds AND a cached refresh token are present."""
+    if not _has_env("SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"):
+        return False
+    token_raw = os.environ.get("SPOTIFY_TOKEN_PATH", "./data/spotify_token.json")
+    token_path = Path(token_raw)
+    if not token_path.is_absolute():
+        token_path = Path(__file__).parent / token_path
+    return token_path.exists()
+
+
+def _has_canva_oauth() -> bool:
+    """True iff Canva app creds AND a cached refresh token are present."""
+    if not _has_env("CANVA_CLIENT_ID", "CANVA_CLIENT_SECRET"):
+        return False
+    token_raw = os.environ.get("CANVA_TOKEN_PATH", "./data/canva_token.json")
+    token_path = Path(token_raw)
+    if not token_path.is_absolute():
+        token_path = Path(__file__).parent / token_path
+    return token_path.exists()
+
+
+def _has_linkedin_oauth() -> bool:
+    """True iff LinkedIn app creds AND a cached access token are present.
+
+    LinkedIn personal-tier doesn't issue refresh tokens, so we only
+    check for the access token file. The auth helper enforces expiry
+    at use time.
+    """
+    if not _has_env("LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET"):
+        return False
+    token_raw = os.environ.get("LINKEDIN_TOKEN_PATH", "./data/linkedin_token.json")
+    token_path = Path(token_raw)
+    if not token_path.is_absolute():
+        token_path = Path(__file__).parent / token_path
+    return token_path.exists()
+
+
 # ─── Safety hooks ───────────────────────────────────────────────────────────
 #
 # Belt-and-suspenders: even though we never expose a send-shaped tool, this
@@ -239,7 +348,7 @@ async def _block_send_tools(
     return {}
 
 
-def build_options(store: MemoryStore) -> ClaudeAgentOptions:
+def build_options(store: MemoryStore, model: str | None = None) -> ClaudeAgentOptions:
     # Sub-agent registration table. Each entry: (name, factory, tool list,
     # is_enabled callable). Filtered by enablement — only configured
     # integrations register, so unused tools don't bloat the system prompt
@@ -255,11 +364,17 @@ def build_options(store: MemoryStore) -> ClaudeAgentOptions:
         ("todoist",   lambda: create_todoist_mcp_server(),         TODOIST_TOOLS,   lambda: _has_env("TODOIST_API_KEY")),
         ("gmail",     lambda: create_gmail_mcp_server(),           GMAIL_TOOLS,     _has_google_oauth),
         ("calendar",  lambda: create_calendar_mcp_server(),        CALENDAR_TOOLS,  _has_google_oauth),
+        ("drive",     lambda: create_drive_mcp_server(),           DRIVE_TOOLS,     _has_google_oauth),
+        ("docs",      lambda: create_docs_mcp_server(),            DOCS_TOOLS,      _has_google_oauth),
+        ("sheets",    lambda: create_sheets_mcp_server(),          SHEETS_TOOLS,    _has_google_oauth),
         ("notion",    lambda: create_notion_mcp_server(),          NOTION_TOOLS,    lambda: _has_env("NOTION_INTEGRATION_TOKEN")),
         ("github",    lambda: create_github_mcp_server(),          GITHUB_TOOLS,    lambda: _has_env("GITHUB_TOKEN")),
         ("web",       lambda: create_web_mcp_server(),             WEB_TOOLS,       lambda: _has_env("BRAVE_SEARCH_API_KEY")),
         ("youtube",   lambda: create_youtube_mcp_server(),         YOUTUBE_TOOLS,   lambda: _has_env("YOUTUBE_API_KEY")),
-        ("dropbox",   lambda: create_dropbox_mcp_server(),         DROPBOX_TOOLS,   lambda: _has_env("DROPBOX_ACCESS_TOKEN")),
+        ("dropbox",   lambda: create_dropbox_mcp_server(),         DROPBOX_TOOLS,   _has_dropbox_oauth),
+        ("spotify",   lambda: create_spotify_mcp_server(),         SPOTIFY_TOOLS,   _has_spotify_oauth),
+        ("canva",     lambda: create_canva_mcp_server(),           CANVA_TOOLS,     _has_canva_oauth),
+        ("linkedin",  lambda: create_linkedin_mcp_server(),        LINKEDIN_TOOLS,  _has_linkedin_oauth),
     ]
 
     mcp_servers: dict[str, Any] = {}
@@ -276,8 +391,12 @@ def build_options(store: MemoryStore) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
         # Personality + runtime context + injected facts.
         system_prompt=build_system_prompt(store),
-        # Pin the model so behavior is reproducible. Override via env var.
-        model=os.environ.get("CLAUDE_MODEL", DEFAULT_MODEL),
+        # Pin the model so behavior is reproducible. Resolution order:
+        # explicit `model` arg → CLAUDE_MODEL env var → DEFAULT_MODEL.
+        # Triggers use the explicit arg to run on a stronger model (Opus)
+        # for the brief/weekly-review prompts; the relay inherits the
+        # env-or-default path (Sonnet) for cost.
+        model=model or os.environ.get("CLAUDE_MODEL", DEFAULT_MODEL),
         mcp_servers=mcp_servers,
         # Allowlist what tools the agent may call. Anything not listed here
         # is blocked.
