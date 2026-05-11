@@ -41,6 +41,12 @@ dependencies = [
     "jinja2>=3.1.0",
     "python-multipart>=0.0.12",
     "sse-starlette>=2.1.0",
+
+    # Local embedding model for semantic recall (memory/embedder.py).
+    # CPU-only inference; default model BAAI/bge-base-en-v1.5 (~440MB
+    # download on first use, ~500MB RAM when loaded).
+    "sentence-transformers>=3.0.0",
+    "numpy>=2.0",
 ]
 
 [project.optional-dependencies]

@@ -364,6 +364,33 @@ python -m tools.uninstall --all --dry-run
 
 ## Operations
 
+### Semantic recall (memory search)
+
+Past conversations + facts are searchable by meaning, not just literal
+substring. Every message and fact is embedded into a 768-dim vector at
+archive time using a local `sentence-transformers` model (default
+`BAAI/bge-base-en-v1.5`, ~440MB on disk, no API). The agent's
+`memory_search_conversations` and `memory_recall_facts` tools score
+candidates by cosine similarity, with a small boost for literal
+substring matches (best of both for fuzzy and exact queries).
+
+Switch the model via `.env`:
+
+```
+EMBEDDER_MODEL=BAAI/bge-base-en-v1.5    # default, balanced
+EMBEDDER_MODEL=BAAI/bge-small-en-v1.5   # ~130MB, ~3x faster, modest quality drop
+EMBEDDER_MODEL=BAAI/bge-large-en-v1.5   # ~1.3GB, marginal quality bump
+```
+
+After changing the model, recompute embeddings:
+
+```bash
+sqlite3 data/memory.sqlite "UPDATE messages SET embedding=NULL; UPDATE facts SET embedding=NULL"
+python -m tools.backfill_embeddings
+```
+
+(The backfill is idempotent; it only touches rows where embedding IS NULL.)
+
 ### Inspect what the agent's been doing
 
 ```bash

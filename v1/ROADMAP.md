@@ -48,13 +48,7 @@ Each item lists what it adds, why it's not in yet, and what unblocks it.
 - **Unblocks:** Web signup at pushover.net for a user key + an app token. Both go in `.env`. **Remote-buildable.**
 - **Effort:** ~30 min.
 
-### Vector memory (Voyage AI embeddings)
-- **What:** Replace SQLite `LIKE` substring search in `memory_search_conversations` with semantic search over the conversation archive. Lets the agent find "that thing we discussed about wedding planning" without exact-keyword matches.
-- **Why deferred:** Wanted to settle daily-use patterns first. Current substring search is adequate for short-term recall.
-- **Unblocks:** Voyage AI signup at voyageai.com → API key in `.env`. Schema change to add an `embeddings` column to `messages`, plus a backfill script for existing messages, plus inline embedding on each archived turn.
-- **Cost:** Voyage's `voyage-3.5-lite` is $0.02 per million tokens — backfilling 200K tokens costs <$0.01.
-- **Remote-buildable.**
-- **Effort:** ~hour.
+### ~~Vector memory~~ — shipped (local sentence-transformers, `BAAI/bge-base-en-v1.5` default; messages + facts embed inline at archive; hybrid vector + LIKE re-rank in `memory_search_conversations` and `memory_recall_facts`; `tools/backfill_embeddings.py` for historical rows. Local-only, no API key — kept the fork-and-run story clean.)
 
 ### Stocks / crypto
 - **What:** Sub-agent that returns price quotes, recent performance, basic fundamentals. "What's BTC at?" / "Show me NVDA's last 30 days."

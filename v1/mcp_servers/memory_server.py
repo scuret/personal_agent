@@ -131,7 +131,11 @@ def create_memory_mcp_server(store: MemoryStore) -> McpSdkServerConfig:
             },
             "query": {
                 "type": "string",
-                "description": "Substring filter on fact content. Omit for category-only or all.",
+                "description": (
+                    "Free-text query — semantic search over fact content "
+                    "(vector + literal substring re-rank). Omit for "
+                    "category-only listing."
+                ),
             },
             "limit": {
                 "type": "integer",
@@ -149,16 +153,26 @@ def create_memory_mcp_server(store: MemoryStore) -> McpSdkServerConfig:
             "Retrieve stored facts about the principal. The most relevant "
             "facts are already injected into your system prompt at startup, "
             "so you usually don't need this — call it only when you need to "
-            "search facts the system prompt didn't include."
+            "search facts the system prompt didn't include. With `query`, "
+            "uses semantic recall (vector + substring re-rank); without "
+            "query, returns the category listing."
         ),
         recall_facts_schema,
     )
     async def memory_recall_facts(args: dict[str, Any]) -> dict[str, Any]:
-        facts = store.recall_facts(
-            category=args.get("category"),
-            query=args.get("query"),
-            limit=int(args.get("limit", 20)),
-        )
+        query = args.get("query")
+        limit = int(args.get("limit", 20))
+        if query:
+            facts = store.semantic_recall_facts(
+                query=query,
+                category=args.get("category"),
+                limit=limit,
+            )
+        else:
+            facts = store.recall_facts(
+                category=args.get("category"),
+                limit=limit,
+            )
         if not facts:
             return {"content": [{"type": "text", "text": "no facts found."}]}
         body = "\n".join(_format_fact_line(f) for f in facts)
@@ -169,7 +183,13 @@ def create_memory_mcp_server(store: MemoryStore) -> McpSdkServerConfig:
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Substring to search across all past conversation messages.",
+                "description": (
+                    "Natural-language description of what you're looking "
+                    "for. Matched semantically across the conversation "
+                    "archive (vector embeddings) with a literal-substring "
+                    "boost — works for both 'pay credit card' (exact) and "
+                    "'that thing about wedding planning' (fuzzy)."
+                ),
             },
             "limit": {
                 "type": "integer",
@@ -184,14 +204,16 @@ def create_memory_mcp_server(store: MemoryStore) -> McpSdkServerConfig:
     @tool(
         "memory_search_conversations",
         (
-            "Search past conversations by substring. Returns conversation "
-            "summaries with the first matching snippet. Use for 'did we ever "
-            "talk about X' style lookups."
+            "Semantic search across past conversations. Returns the "
+            "best-matching conversation summaries with the highest-scoring "
+            "snippet from each. Use for 'did we ever talk about X', 'what "
+            "was that note about Y', or any time you want to surface "
+            "prior context that the current conversation doesn't have."
         ),
         search_schema,
     )
     async def memory_search_conversations(args: dict[str, Any]) -> dict[str, Any]:
-        results = store.search_conversations(
+        results = store.semantic_search_conversations(
             query=args["query"], limit=int(args.get("limit", 10))
         )
         if not results:

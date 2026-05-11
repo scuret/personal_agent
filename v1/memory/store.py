@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -142,6 +143,24 @@ class MemoryStore:
         if "recurrence_rule" not in existing_cols:
             conn.execute("ALTER TABLE reminders ADD COLUMN recurrence_rule TEXT")
 
+        # Semantic-recall embeddings. Float32 blobs, dim varies by
+        # configured model (768 for bge-base, 384 for bge-small, etc.).
+        # NULL is the unmigrated state — backfill_embeddings.py fills
+        # historical rows; append_message / log_fact populate new rows.
+        msg_cols = {
+            r["name"]
+            for r in conn.execute("PRAGMA table_info(messages)").fetchall()
+        }
+        if "embedding" not in msg_cols:
+            conn.execute("ALTER TABLE messages ADD COLUMN embedding BLOB")
+
+        fact_cols = {
+            r["name"]
+            for r in conn.execute("PRAGMA table_info(facts)").fetchall()
+        }
+        if "embedding" not in fact_cols:
+            conn.execute("ALTER TABLE facts ADD COLUMN embedding BLOB")
+
     # ─── Conversation archive ───────────────────────────────────────────────
 
     def open_conversation(self, source: str = "cli", metadata: dict[str, Any] | None = None) -> str:
@@ -206,7 +225,7 @@ class MemoryStore:
         content: str,
         tool_calls: list[dict[str, Any]] | None = None,
     ) -> None:
-        self._conn().execute(
+        cur = self._conn().execute(
             """INSERT INTO messages (conversation_id, role, content, tool_calls, created_at)
                VALUES (?, ?, ?, ?, ?)""",
             (
@@ -217,12 +236,20 @@ class MemoryStore:
                 _now(),
             ),
         )
+        # Embed the message inline so semantic recall picks it up. If the
+        # embedder fails (model missing, OOM, anything), log + continue —
+        # the row is still archived, just searchable only via substring.
+        row_id = cur.lastrowid
+        if row_id and content:
+            self._embed_and_update(table="messages", row_id=int(row_id), content=content)
 
     def search_conversations(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
         """Substring search across message content. Returns conversation summaries.
 
-        Naive LIKE search for v1 — adequate for personal-scale data. Can swap
-        for FTS5 later if needed.
+        Naive LIKE search — kept around as a fallback when the embedder
+        is unavailable (e.g. during tests, or first-boot before any
+        messages have embeddings). The MCP `memory_search_conversations`
+        tool now goes through `semantic_search_conversations` by default.
         """
         rows = self._conn().execute(
             """SELECT c.id, c.started_at, c.source,
@@ -238,6 +265,189 @@ class MemoryStore:
             (f"%{query}%", f"%{query}%", limit),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    # ─── Semantic search (vector + LIKE re-rank) ────────────────────────────
+    #
+    # Both methods score each row by `cosine(query, row.embedding) + boost`,
+    # where boost = SEMANTIC_LITERAL_BOOST (0.10) iff the query string
+    # appears in the row's content (case-insensitive substring).
+    # Embeddings are normalized at encode time so cosine == dot product.
+
+    SEMANTIC_LITERAL_BOOST: float = 0.10
+    SEMANTIC_SEARCH_FLOOR: float = 0.30  # below this, we won't surface a row at all
+
+    def _embed_query(self, query: str):
+        """Encode a query string. Returns the numpy float32 vector or
+        None if the embedder is unavailable — callers fall back to LIKE."""
+        try:
+            from memory.embedder import encode  # lazy import
+            import numpy as np
+
+            vec = encode(query)
+            return np.asarray(vec, dtype=np.float32)
+        except Exception as e:  # noqa: BLE001
+            print(f"[memory] semantic search embed failed: {e}", file=sys.stderr)
+            return None
+
+    def semantic_search_conversations(
+        self,
+        query: str,
+        limit: int = 10,
+        hybrid: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Vector + (optional) substring re-rank over the messages table.
+
+        Returns one row per conversation (the conversation containing the
+        best-scoring message) in the same shape as `search_conversations`:
+            {id, started_at, source, message_count, first_match}
+        Falls back to substring search if the embedder isn't available.
+        """
+        q_vec = self._embed_query(query)
+        if q_vec is None:
+            return self.search_conversations(query, limit=limit)
+
+        import numpy as np
+
+        rows = self._conn().execute(
+            """SELECT m.id        AS msg_id,
+                      m.conversation_id,
+                      m.content,
+                      m.created_at,
+                      m.embedding
+                 FROM messages m
+                WHERE m.embedding IS NOT NULL"""
+        ).fetchall()
+        if not rows:
+            # No embeddings yet (fresh install pre-backfill) — fall back.
+            return self.search_conversations(query, limit=limit)
+
+        embeddings = np.stack(
+            [np.frombuffer(r["embedding"], dtype=np.float32) for r in rows]
+        )
+        sims = embeddings @ q_vec  # both sides normalized → cosine
+
+        q_lower = query.lower()
+        boosts = np.array(
+            [
+                self.SEMANTIC_LITERAL_BOOST if q_lower in (r["content"] or "").lower() else 0.0
+                for r in rows
+            ],
+            dtype=np.float32,
+        ) if hybrid else np.zeros(len(rows), dtype=np.float32)
+        scores = sims + boosts
+
+        # Walk message hits in score order, dedup by conversation_id,
+        # stop after `limit` distinct conversations.
+        order = np.argsort(-scores)
+        seen: set[str] = set()
+        out: list[dict[str, Any]] = []
+        for idx in order:
+            score = float(scores[idx])
+            if score < self.SEMANTIC_SEARCH_FLOOR:
+                break
+            r = rows[idx]
+            conv_id = r["conversation_id"]
+            if conv_id in seen:
+                continue
+            seen.add(conv_id)
+
+            # Fetch the conversation summary the MCP tool expects.
+            # Alias `conversations` as `c` so the subquery's `c.id` is
+            # unambiguous (a bare `id` would resolve to messages.id
+            # under SQLite's column-resolution rules).
+            conv = self._conn().execute(
+                """SELECT c.id, c.started_at, c.source,
+                          (SELECT COUNT(*) FROM messages mm WHERE mm.conversation_id = c.id) AS message_count
+                     FROM conversations c WHERE c.id = ?""",
+                (conv_id,),
+            ).fetchone()
+            if not conv:
+                continue
+            out.append({
+                "id": conv["id"],
+                "started_at": conv["started_at"],
+                "source": conv["source"],
+                "message_count": conv["message_count"],
+                "first_match": r["content"],
+                "score": round(score, 4),
+            })
+            if len(out) >= limit:
+                break
+        return out
+
+    def semantic_recall_facts(
+        self,
+        query: str,
+        category: str | None = None,
+        limit: int = 20,
+        hybrid: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Vector + (optional) substring re-rank over the active facts table.
+
+        Same shape as `recall_facts` so the MCP tool surface is
+        unchanged. Falls back to SQL substring filtering if the embedder
+        isn't available.
+        """
+        q_vec = self._embed_query(query)
+        if q_vec is None:
+            return self.recall_facts(category=category, query=query, limit=limit)
+
+        import numpy as np
+
+        sql = (
+            "SELECT id, content, category, tags, confidence, created_at, embedding "
+            "FROM facts WHERE is_active = 1 AND embedding IS NOT NULL"
+        )
+        params: list[Any] = []
+        if category:
+            sql += " AND category = ?"
+            params.append(category)
+        rows = self._conn().execute(sql, params).fetchall()
+        if not rows:
+            return self.recall_facts(category=category, query=query, limit=limit)
+
+        embeddings = np.stack(
+            [np.frombuffer(r["embedding"], dtype=np.float32) for r in rows]
+        )
+        sims = embeddings @ q_vec
+
+        q_lower = query.lower()
+        boosts = np.array(
+            [
+                self.SEMANTIC_LITERAL_BOOST if q_lower in (r["content"] or "").lower() else 0.0
+                for r in rows
+            ],
+            dtype=np.float32,
+        ) if hybrid else np.zeros(len(rows), dtype=np.float32)
+        scores = sims + boosts
+
+        order = np.argsort(-scores)[:limit]
+        results: list[dict[str, Any]] = []
+        for idx in order:
+            score = float(scores[idx])
+            if score < self.SEMANTIC_SEARCH_FLOOR:
+                break
+            r = rows[idx]
+            results.append({
+                "id": r["id"],
+                "content": r["content"],
+                "category": r["category"],
+                "tags": json.loads(r["tags"]) if r["tags"] else [],
+                "confidence": r["confidence"],
+                "created_at": r["created_at"],
+                "score": round(score, 4),
+            })
+
+        # Bookkeeping: bump recall stats so we know which facts get pulled.
+        if results:
+            ids = [r["id"] for r in results]
+            placeholders = ",".join("?" * len(ids))
+            self._conn().execute(
+                f"""UPDATE facts SET last_recalled_at = ?, recall_count = recall_count + 1
+                    WHERE id IN ({placeholders})""",
+                [_now(), *ids],
+            )
+        return results
 
     # ─── Audit log ──────────────────────────────────────────────────────────
 
@@ -281,7 +491,35 @@ class MemoryStore:
             (content, category, json.dumps(tags or []), confidence, _now()),
         )
         # `lastrowid` is set on the cursor returned by execute().
-        return int(cur.lastrowid or 0)
+        fact_id = int(cur.lastrowid or 0)
+        if fact_id and content:
+            self._embed_and_update(table="facts", row_id=fact_id, content=content)
+        return fact_id
+
+    # ─── Embeddings ─────────────────────────────────────────────────────────
+
+    def _embed_and_update(self, table: str, row_id: int, content: str) -> None:
+        """Encode `content` and persist the bytes into <table>.embedding.
+
+        Failure is non-fatal — the row stays archived without a vector,
+        and substring search still finds it. Errors print to stderr so
+        the daemon log surfaces them, but `append_message` / `log_fact`
+        callers don't see exceptions from this path.
+        """
+        try:
+            from memory.embedder import encode_to_bytes  # lazy: keeps daemon startup snappy
+
+            blob = encode_to_bytes(content)
+        except Exception as e:  # noqa: BLE001
+            print(f"[memory] embed failed for {table}#{row_id}: {e}", file=sys.stderr)
+            return
+        try:
+            self._conn().execute(
+                f"UPDATE {table} SET embedding = ? WHERE id = ?",
+                (blob, row_id),
+            )
+        except sqlite3.Error as e:
+            print(f"[memory] embed write failed for {table}#{row_id}: {e}", file=sys.stderr)
 
     def recall_facts(
         self,
