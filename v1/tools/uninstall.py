@@ -29,7 +29,7 @@ Sub-agent removal:
     technically remain valid until you revoke at the provider).
 
 Full uninstall removes:
-  • LaunchAgents (relay, scheduler, log-rotation) — bootout + plist delete
+  • LaunchAgents (relay, scheduler, log-rotation, webui) — bootout + plist delete
   • data/ contents — sqlite, logs, all token caches
   • .venv/
   • .env
@@ -449,7 +449,7 @@ def remove_config_secrets(dry_run: bool) -> bool:
 def full_uninstall(dry_run: bool, yes: bool) -> None:
     _hr("FULL UNINSTALL")
     print("This will remove:")
-    print("  • LaunchAgents (relay, scheduler, log-rotation)")
+    print("  • LaunchAgents (relay, scheduler, log-rotation, webui)")
     print("  • data/ contents (sqlite, logs, all token caches)")
     print("  • .venv/")
     print("  • .env (your API keys)")

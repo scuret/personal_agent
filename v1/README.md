@@ -291,17 +291,18 @@ python -m scheduler.triggers                          # daemon
 
 ### 6. Auto-start on login (LaunchAgents)
 
-Once everything works manually, install all three launch agents:
+Once everything works manually, install all four launch agents:
 
 ```bash
 ./launch_agents/install.sh
 ```
 
-This renders absolute paths into the plists, copies them to `~/Library/LaunchAgents/`, and loads them via `launchctl bootstrap`. Three agents:
+This renders absolute paths into the plists, copies them to `~/Library/LaunchAgents/`, and loads them via `launchctl bootstrap`. Four agents:
 
 - `com.personal-agent.relay` — long-running iMessage relay
 - `com.personal-agent.scheduler` — long-running scheduler (briefs, reminders, weekly review)
 - `com.personal-agent.log-rotation` — daily at 03:00, rotates daemon logs
+- `com.personal-agent.webui` — local web admin UI at `http://127.0.0.1:8780`
 
 To remove the LaunchAgents only (keeps the rest of the install intact):
 

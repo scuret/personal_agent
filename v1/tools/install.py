@@ -10,8 +10,8 @@ Walks through:
   4. Google OAuth — credentials.json + first-auth flow if Gmail or
      Calendar selected.
   5. iMessage relay — mode + target_phone_number + self_handles.
-  6. LaunchAgents — offer to install all three (relay, scheduler,
-     log-rotation) so the daemons auto-start on login.
+  6. LaunchAgents — offer to install all four (relay, scheduler,
+     log-rotation, webui) so the daemons auto-start on login.
 
 Existing values in .env are preserved unless the user explicitly
 changes them. Empty input at a prompt = keep existing.
@@ -781,9 +781,10 @@ def step_behavior(env: dict[str, str]) -> None:
 
 def step_launchagents() -> None:
     _hr("6. LaunchAgents (auto-start on login)")
-    print("Three launch agents: relay, scheduler, log-rotation.")
+    print("Four launch agents: relay, scheduler, log-rotation, webui.")
     print("Installing renders absolute paths into the plists, copies them")
     print("to ~/Library/LaunchAgents/, and starts them via launchctl.")
+    print("The webui daemon serves the local admin UI at http://127.0.0.1:8780.")
     if not _yn("Install LaunchAgents now?", default=False):
         print("  Skipped — run ./launch_agents/install.sh later when ready.")
         return
@@ -804,6 +805,10 @@ def step_summary(env: dict[str, str], enabled: set[str]) -> None:
     _hr("Done")
     print(f"Config written to {ENV_PATH}")
     print(f"Enabled sub-agents ({len(enabled)}): {', '.join(sorted(enabled))}")
+    print()
+    print("Web admin UI (if LaunchAgents installed):")
+    print("  http://127.0.0.1:8780")
+    print("  Dashboard + chat + history + observability + config editors.")
     print()
     print("Next steps:")
     print("  • Verify token health:     python -m tools.token_health")
