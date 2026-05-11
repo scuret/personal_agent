@@ -9,7 +9,7 @@ from tools.analytics import analytics_data
 from tools.cost_report import summary as cost_summary
 from tools.token_health import run_checks
 from web import daemon_control
-from web.app import templates
+from web.templating import templates
 
 router = APIRouter(prefix="/observability")
 

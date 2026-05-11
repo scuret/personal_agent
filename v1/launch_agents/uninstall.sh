@@ -9,7 +9,7 @@ LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 
 UID_DOMAIN="gui/$(id -u)"
 
-for label in com.personal-agent.relay com.personal-agent.scheduler com.personal-agent.log-rotation com.personal-agent.web; do
+for label in com.personal-agent.relay com.personal-agent.scheduler com.personal-agent.log-rotation com.personal-agent.webui; do
     plist="$LAUNCH_AGENTS_DIR/${label}.plist"
     if launchctl print "$UID_DOMAIN/$label" >/dev/null 2>&1; then
         launchctl bootout "$UID_DOMAIN/$label" 2>/dev/null || true

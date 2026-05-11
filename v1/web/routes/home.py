@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse
 from memory.store import MemoryStore
 from tools.cost_report import summary as cost_summary
 from web import daemon_control
-from web.app import templates
+from web.templating import templates
 
 router = APIRouter()
 

@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 
 from memory.store import MemoryStore
-from web.app import templates
+from web.templating import templates
 
 router = APIRouter()
 

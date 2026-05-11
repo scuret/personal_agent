@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse
 from sse_starlette.sse import EventSourceResponse
 
 from web import daemon_control
-from web.app import templates
+from web.templating import templates
 
 router = APIRouter(prefix="/daemon")
 

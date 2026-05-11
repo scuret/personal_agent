@@ -48,7 +48,7 @@ Plus: **scheduled morning brief** (~7:30 AM) and **Sunday weekly review** (8 PM)
 ## Web admin UI
 
 A local-only web UI ships alongside the daemons. Open
-`http://127.0.0.1:8770` (auto-started by the `com.personal-agent.web`
+`http://127.0.0.1:8780` (auto-started by the `com.personal-agent.webui`
 LaunchAgent) and you get:
 
 - **Dashboard** — daemon status, last-24h spend, pending reminders, recent conversations, upcoming brief fires, one-click trigger buttons
@@ -65,7 +65,7 @@ Bound to `127.0.0.1` only; no auth boundary needed.
 Manual dev start (without the LaunchAgent):
 
 ```bash
-.venv/bin/uvicorn web.app:app --host 127.0.0.1 --port 8770 --reload
+.venv/bin/uvicorn web.app:app --host 127.0.0.1 --port 8780 --reload
 ```
 
 ---
@@ -150,7 +150,7 @@ v1/
 │   ├── com.personal-agent.relay.plist          # auto-start the relay
 │   ├── com.personal-agent.scheduler.plist      # auto-start the scheduler
 │   ├── com.personal-agent.log-rotation.plist   # daily at 03:00
-│   ├── com.personal-agent.web.plist            # auto-start the web UI
+│   ├── com.personal-agent.webui.plist            # auto-start the web UI
 │   ├── install.sh                              # render + load all four
 │   └── uninstall.sh
 ├── config/

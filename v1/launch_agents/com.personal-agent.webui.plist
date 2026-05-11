@@ -3,22 +3,19 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.personal-agent.web</string>
+    <string>com.personal-agent.webui</string>
 
     <key>ProgramArguments</key>
     <array>
         <string>__V1_DIR__/.venv/bin/python</string>
-        <!-- -u: unbuffered stdout/stderr so log files reflect real-time
-             output instead of waiting for Python's block-buffer to flush. -->
         <string>-u</string>
         <string>-m</string>
         <string>uvicorn</string>
         <string>web.app:app</string>
         <string>--host</string>
-        <!-- 127.0.0.1 only — no LAN exposure, no auth boundary needed. -->
         <string>127.0.0.1</string>
         <string>--port</string>
-        <string>8770</string>
+        <string>8780</string>
     </array>
 
     <key>WorkingDirectory</key>
@@ -27,7 +24,6 @@
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- Restart on crash. ThrottleInterval prevents tight restart loops. -->
     <key>KeepAlive</key>
     <true/>
     <key>ThrottleInterval</key>

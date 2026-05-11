@@ -12,7 +12,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from agent_host import process_turn_stream
 from memory.store import MemoryStore
-from web.app import templates
+from web.templating import templates
 from web.sessions import POOL
 
 router = APIRouter()

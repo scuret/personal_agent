@@ -15,7 +15,7 @@ from pathlib import Path
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from web.app import templates
+from web.templating import templates
 
 router = APIRouter(prefix="/config")
 

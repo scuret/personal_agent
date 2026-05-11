@@ -9,7 +9,7 @@ Labels currently managed:
   com.personal-agent.relay
   com.personal-agent.scheduler
   com.personal-agent.log-rotation
-  com.personal-agent.web              (the web UI itself)
+  com.personal-agent.webui              (the web UI itself)
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ DAEMONS: dict[str, dict[str, str]] = {
     "relay":        {"label": "com.personal-agent.relay",        "log_basename": "relay"},
     "scheduler":    {"label": "com.personal-agent.scheduler",    "log_basename": "scheduler"},
     "log-rotation": {"label": "com.personal-agent.log-rotation", "log_basename": "log-rotation"},
-    "web":          {"label": "com.personal-agent.web",          "log_basename": "web"},
+    "web":          {"label": "com.personal-agent.webui",          "log_basename": "web"},
 }
 
 

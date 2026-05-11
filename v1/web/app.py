@@ -1,15 +1,15 @@
 """personal_agent web admin UI — FastAPI entrypoint.
 
-Single uvicorn process, bound to 127.0.0.1:8770. Wraps the existing
+Single uvicorn process, bound to 127.0.0.1:8780. Wraps the existing
 modules (memory.store, scheduler.triggers, agent_host, tools/*) — no
 IPC, just Python imports. Templating is Jinja2 + HTMX + Tailwind via
 CDN (no Node toolchain).
 
 Run for local dev:
-    uvicorn web.app:app --host 127.0.0.1 --port 8770 --reload
+    uvicorn web.app:app --host 127.0.0.1 --port 8780 --reload
 
 Production (LaunchAgent):
-    uvicorn web.app:app --host 127.0.0.1 --port 8770
+    uvicorn web.app:app --host 127.0.0.1 --port 8780
 """
 
 from __future__ import annotations
@@ -25,17 +25,17 @@ load_dotenv()
 from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.responses import HTMLResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
-from fastapi.templating import Jinja2Templates  # noqa: E402
+
+from web.templating import templates  # noqa: E402
 
 V1_DIR = Path(__file__).resolve().parent.parent
-TEMPLATES_DIR = V1_DIR / "web" / "templates"
 STATIC_DIR = V1_DIR / "web" / "static"
 
 # Bound to 127.0.0.1 only — no LAN exposure, no auth needed for v1.
 # If you ever expose this to a network, add session-cookie auth at
 # this middleware boundary first.
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8770
+DEFAULT_PORT = 8780
 
 
 @asynccontextmanager
@@ -43,9 +43,6 @@ async def lifespan(_app: FastAPI):
     """Startup + shutdown hooks. v1 has nothing to initialize at startup;
     routes lazily construct MemoryStore instances on first use."""
     yield
-
-
-templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
 def make_app() -> FastAPI:

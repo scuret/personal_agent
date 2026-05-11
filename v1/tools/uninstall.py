@@ -64,7 +64,7 @@ LAUNCH_AGENT_LABELS = [
     "com.personal-agent.relay",
     "com.personal-agent.scheduler",
     "com.personal-agent.log-rotation",
-    "com.personal-agent.web",
+    "com.personal-agent.webui",
 ]
 
 # Per-sub-agent token-cache file(s) (relative to V1_DIR). For Google
