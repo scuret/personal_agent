@@ -486,6 +486,124 @@ def _short_sender(from_header: str) -> str:
     return s or "?"
 
 
+# Haiku model used to summarize flagged emails for the alert. Cheaper +
+# faster than Sonnet; sufficient for "what's the ask + suggest a reply"
+# triage. Switch via SUMMARIZER_MODEL if needed.
+_SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", "claude-haiku-4-5-20251001")
+_SUMMARIZER_MAX_BODY_CHARS = 4000  # cap input to keep Haiku call bounded
+_SUMMARIZER_MAX_TOKENS = 200
+
+
+def _summarize_flagged_email(email: dict[str, Any]) -> dict[str, str]:
+    """Call Haiku to produce a short summary + recommended action.
+
+    Returns {"summary": str, "action": str}. On any failure (no body,
+    Haiku API error, parse weirdness) returns empty strings and the
+    caller falls back to the bare alert format. Email-watch is a
+    notification path — it must never crash the daemon.
+    """
+    try:
+        body = _fetch_email_body(email["id"])
+    except Exception as e:  # noqa: BLE001
+        print(f"[email_watch] body fetch failed: {e}", file=sys.stderr)
+        body = ""
+    # Fall back to the Gmail snippet if full-body fetch returned nothing.
+    if not body:
+        body = email.get("snippet") or ""
+    if not body.strip():
+        return {"summary": "", "action": ""}
+
+    body_capped = body[:_SUMMARIZER_MAX_BODY_CHARS]
+    prompt = (
+        "You're triaging an email surfaced by an inbox-watcher to a "
+        "principal who'll see your output as a phone notification. "
+        "Read the email below and output EXACTLY two lines, no markdown, "
+        "no preamble, no labels:\n"
+        "  Line 1: one sentence describing what the sender is asking "
+        "for or telling them. If it's a thread, focus on the LATEST "
+        "message. Keep it under 25 words.\n"
+        "  Line 2: a concrete suggested action — either a recommended "
+        "reply ('confirm Tuesday', 'decline politely', 'forward to "
+        "Travis'), a disposition ('ignore — newsletter', 'archive — "
+        "FYI only'), or a clarifying question if a decision is needed "
+        "('reply yes or no?'). Keep it under 20 words.\n"
+        "\n"
+        "--- EMAIL ---\n"
+        f"From: {email.get('from', '')}\n"
+        f"Subject: {email.get('subject', '') or '(no subject)'}\n"
+        f"\n"
+        f"{body_capped}"
+    )
+
+    try:
+        import anthropic  # late import — keep daemon-startup lean
+
+        client = anthropic.Anthropic()
+        resp = client.messages.create(
+            model=_SUMMARIZER_MODEL,
+            max_tokens=_SUMMARIZER_MAX_TOKENS,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        out = "".join(
+            b.text for b in resp.content if getattr(b, "type", "") == "text"
+        ).strip()
+    except Exception as e:  # noqa: BLE001
+        print(f"[email_watch] summarizer call failed: {e}", file=sys.stderr)
+        return {"summary": "", "action": ""}
+
+    lines = [line.strip() for line in out.splitlines() if line.strip()]
+    return {
+        "summary": lines[0] if lines else "",
+        "action": lines[1] if len(lines) > 1 else "",
+    }
+
+
+def _format_email_alert(
+    enriched: list[dict[str, Any]],
+) -> str:
+    """Render the iMessage / Telegram / Discord text for an email-watch fire.
+
+    Single email gets the full 2-line treatment. Multi-email gets a
+    compressed one-line-per-email format so the notification doesn't
+    sprawl. Falls back to the previous bare format when the summarizer
+    didn't produce anything for an email.
+    """
+    if len(enriched) == 1:
+        e = enriched[0]
+        email = e["email"]
+        sender = _short_sender(email.get("from", ""))
+        subject = email.get("subject") or "(no subject)"
+        lines = [
+            f"📧 from {sender}",
+            f"subject: {subject}",
+        ]
+        if e["summary"]:
+            lines.append("")  # blank line for breathing room on phone
+            lines.append(e["summary"])
+        if e["action"]:
+            lines.append(f"→ {e['action']}")
+        if not e["summary"] and not e["action"]:
+            # Fall back to the old reason-string format when summarizer
+            # produced nothing usable.
+            lines.append(f"({e['reason']})")
+        return "\n".join(lines)
+
+    out = [f"📧 {len(enriched)} important emails:"]
+    for e in enriched:
+        email = e["email"]
+        sender = _short_sender(email.get("from", ""))
+        subject = (email.get("subject") or "(no subject)")[:60]
+        out.append("")
+        out.append(f"— {sender}: {subject}")
+        if e["summary"]:
+            out.append(f"  {e['summary']}")
+        if e["action"]:
+            out.append(f"  → {e['action']}")
+        if not e["summary"] and not e["action"]:
+            out.append(f"  ({e['reason']})")
+    return "\n".join(out)
+
+
 def _fire_email_watch(store: MemoryStore, config: dict[str, Any], now: datetime) -> None:
     cfg = (config.get("email_triggers") or {})
     if not cfg.get("enabled"):
@@ -543,22 +661,21 @@ def _fire_email_watch(store: MemoryStore, config: dict[str, Any], now: datetime)
     if not flagged:
         return
 
-    if len(flagged) == 1:
-        email, reason = flagged[0]
-        text = (
-            f"📧 Important email\n"
-            f"from {_short_sender(email['from'])}\n"
-            f"subject: {email['subject'] or '(no subject)'}\n"
-            f"({reason})"
-        )
-    else:
-        lines = [f"📧 {len(flagged)} important emails:"]
-        for email, reason in flagged:
-            subj = (email["subject"] or "(no subject)")[:60]
-            lines.append(
-                f"- {_short_sender(email['from'])}: {subj} ({reason})"
-            )
-        text = "\n".join(lines)
+    # For each flagged email, call Haiku to produce a summary + recommended
+    # action. Bounded cost (~$0.001/email) and bounded latency (~1-2s) —
+    # falls back to the bare format if Haiku errors so a notification
+    # path never silently drops an alert.
+    enriched: list[dict[str, Any]] = []
+    for email, reason in flagged:
+        summary = _summarize_flagged_email(email)
+        enriched.append({
+            "email": email,
+            "reason": reason,
+            "summary": summary["summary"],
+            "action": summary["action"],
+        })
+
+    text = _format_email_alert(enriched)
 
     sender = make_sender()
     ok, err = sender.send(text)
