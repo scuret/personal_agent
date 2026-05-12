@@ -487,19 +487,28 @@ def step_relay(env: dict[str, str]) -> None:
     print("  imessage  — macOS only. Polls chat.db + sends via AppleScript.")
     print("              Requires Full Disk Access + Automation permissions.")
     print("  telegram  — Cross-platform. Bot via @BotFather, no Mac needed.")
+    print("  discord   — Discord bot, DMs only. Cross-platform.")
+    print("  slack     — Slack bot in a workspace, DMs only. Cross-platform.")
     print()
 
     current = env.get("RELAY_TRANSPORT", "imessage")
-    transport = _ask("RELAY_TRANSPORT [imessage/telegram]:", default=current)
-    if transport not in ("imessage", "telegram"):
+    transport = _ask(
+        "RELAY_TRANSPORT [imessage/telegram/discord/slack]:", default=current
+    )
+    valid = ("imessage", "telegram", "discord", "slack")
+    if transport not in valid:
         _warn(f"unknown transport {transport!r}, keeping {current}")
         transport = current
     env["RELAY_TRANSPORT"] = transport
 
     if transport == "imessage":
         _step_imessage_config(env)
-    else:
+    elif transport == "telegram":
         _step_telegram_config(env)
+    elif transport == "discord":
+        _step_discord_config(env)
+    elif transport == "slack":
+        _step_slack_config(env)
 
 
 def _step_imessage_config(env: dict[str, str]) -> None:
@@ -577,6 +586,93 @@ def _step_telegram_config(env: dict[str, str]) -> None:
     print()
     print("After install, you can verify with:")
     print("  python -m relay.telegram_relay --check")
+
+
+def _step_discord_config(env: dict[str, str]) -> None:
+    print()
+    print("─ Discord config ─")
+    print("Step 1: create the bot")
+    print("  discord.com/developers/applications → New Application →")
+    print("  name it 'personal_agent' → Bot tab → enable 'Message Content")
+    print("  Intent' (privileged) → Reset Token → copy.")
+    print()
+    env["DISCORD_BOT_TOKEN"] = _ask(
+        "DISCORD_BOT_TOKEN:", default=env.get("DISCORD_BOT_TOKEN", "")
+    )
+
+    print()
+    print("Step 2: invite the bot to a server you admin")
+    print("  OAuth2 → URL Generator → Scopes: bot. Bot Permissions:")
+    print("  Send Messages, Read Message History, Attach Files. Open the")
+    print("  generated URL, pick a server, authorize.")
+    print()
+    print("Step 3: find your Discord user id")
+    print("  Settings → Advanced → Developer Mode on. Right-click yourself")
+    print("  → Copy User ID. Comma-separated for multiple.")
+    env["DISCORD_ALLOWED_USER_IDS"] = _ask(
+        "DISCORD_ALLOWED_USER_IDS:",
+        default=env.get("DISCORD_ALLOWED_USER_IDS", ""),
+    )
+
+    print()
+    print("Optional: recipient id for scheduled briefs. Defaults to first allowed.")
+    env["DISCORD_BRIEF_RECIPIENT_ID"] = _ask(
+        "DISCORD_BRIEF_RECIPIENT_ID:",
+        default=env.get("DISCORD_BRIEF_RECIPIENT_ID", ""),
+    )
+
+    print()
+    print("After install, verify with:  python -m relay.discord_relay --check")
+
+
+def _step_slack_config(env: dict[str, str]) -> None:
+    print()
+    print("─ Slack config ─")
+    print("Slack uses Socket Mode — Slack opens a WebSocket back to this")
+    print("daemon, so there's no public webhook URL to configure.")
+    print()
+    print("Step 1: create the app")
+    print("  api.slack.com/apps → Create New App → From scratch → name")
+    print("  'personal_agent' → pick a workspace you control.")
+    print()
+    print("Step 2: enable Socket Mode")
+    print("  Socket Mode → Enable → create an App-Level Token")
+    print("  'personal_agent_socket' with scope `connections:write`. Copy")
+    print("  the resulting xapp-… token.")
+    env["SLACK_APP_TOKEN"] = _ask(
+        "SLACK_APP_TOKEN:", default=env.get("SLACK_APP_TOKEN", "")
+    )
+
+    print()
+    print("Step 3: bot token")
+    print("  OAuth & Permissions → Bot Token Scopes → add:")
+    print("    chat:write, im:history, im:read, files:read, users:read")
+    print("  Install to Workspace. Copy the Bot User OAuth Token (xoxb-…).")
+    env["SLACK_BOT_TOKEN"] = _ask(
+        "SLACK_BOT_TOKEN:", default=env.get("SLACK_BOT_TOKEN", "")
+    )
+
+    print()
+    print("Step 4: enable message.im event")
+    print("  Event Subscriptions → Enable Events → Subscribe to bot")
+    print("  events: message.im")
+    print()
+    print("Step 5: your Slack user id")
+    print("  Workspace → click your name → ⋯ → 'Copy member ID' (Uxxx…).")
+    print("  Comma-separated for multiple.")
+    env["SLACK_ALLOWED_USER_IDS"] = _ask(
+        "SLACK_ALLOWED_USER_IDS:",
+        default=env.get("SLACK_ALLOWED_USER_IDS", ""),
+    )
+
+    print()
+    print("Optional: user id for scheduled briefs. Defaults to first allowed.")
+    env["SLACK_BRIEF_USER_ID"] = _ask(
+        "SLACK_BRIEF_USER_ID:", default=env.get("SLACK_BRIEF_USER_ID", "")
+    )
+
+    print()
+    print("After install, verify with:  python -m relay.slack_relay --check")
 
 
 # ─── Triggers (email watch + scheduler config) ─────────────────────────────

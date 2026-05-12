@@ -19,7 +19,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from relay.sender import (  # noqa: E402
+    TRANSPORT_DISCORD,
     TRANSPORT_IMESSAGE,
+    TRANSPORT_SLACK,
     TRANSPORT_TELEGRAM,
     current_transport,
 )
@@ -37,10 +39,20 @@ def main() -> None:
 
         print(f"[relay.run] dispatching to telegram transport")
         run_telegram()
+    elif transport == TRANSPORT_DISCORD:
+        from relay.discord_relay import main as run_discord
+
+        print(f"[relay.run] dispatching to discord transport")
+        run_discord()
+    elif transport == TRANSPORT_SLACK:
+        from relay.slack_relay import main as run_slack
+
+        print(f"[relay.run] dispatching to slack transport")
+        run_slack()
     else:
         print(
             f"error: unknown RELAY_TRANSPORT={transport!r} "
-            "(expected 'imessage' or 'telegram')",
+            "(expected 'imessage', 'telegram', 'discord', or 'slack')",
             file=sys.stderr,
         )
         sys.exit(1)

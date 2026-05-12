@@ -47,6 +47,19 @@ dependencies = [
     # download on first use, ~500MB RAM when loaded).
     "sentence-transformers>=3.0.0",
     "numpy>=2.0",
+
+    # Discord transport — bot client for relay/discord_relay.py.
+    "discord.py>=2.4",
+
+    # Slack transport — slack-bolt's Socket Mode keeps everything
+    # local-only (no public webhook URL needed).
+    "slack-sdk>=3.33",
+    "slack-bolt>=1.20",
+
+    # Maps/Places sub-agent. googlemaps is for the Google adapter; OSM
+    # adapter uses plain requests. Only one provider runs at a time
+    # based on whether GOOGLE_MAPS_API_KEY is set in .env.
+    "googlemaps>=4.10",
 ]
 
 [project.optional-dependencies]

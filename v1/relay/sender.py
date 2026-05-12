@@ -18,6 +18,8 @@ import os
 # Transport names — keep in sync with relay/run.py.
 TRANSPORT_IMESSAGE = "imessage"
 TRANSPORT_TELEGRAM = "telegram"
+TRANSPORT_DISCORD = "discord"
+TRANSPORT_SLACK = "slack"
 
 
 def current_transport() -> str:
@@ -27,19 +29,29 @@ def current_transport() -> str:
 def make_sender():
     """Return a Sender appropriate for the configured RELAY_TRANSPORT.
 
-    Imports happen lazily so we don't pay the cost of importing both
-    transports' deps when only one is in use (notably py-applescript
-    is macOS-only and isn't needed if Telegram is selected).
+    Imports happen lazily so we don't pay the cost of importing all
+    transport deps when only one is in use (notably py-applescript is
+    macOS-only and isn't needed for the network-based transports;
+    discord.py and slack-bolt similarly aren't needed for iMessage).
     """
     transport = current_transport()
     if transport == TRANSPORT_TELEGRAM:
         from relay.telegram_relay import TelegramSender, _resolve_telegram_chat_id
 
         return TelegramSender(_resolve_telegram_chat_id())
+    if transport == TRANSPORT_DISCORD:
+        from relay.discord_relay import DiscordSender, _resolve_discord_recipient
+
+        return DiscordSender(_resolve_discord_recipient())
+    if transport == TRANSPORT_SLACK:
+        from relay.slack_relay import SlackSender, _resolve_slack_recipient
+
+        return SlackSender(_resolve_slack_recipient())
     if transport == TRANSPORT_IMESSAGE:
         from relay.imessage_relay import ChatSender, _resolve_send_handle
 
         return ChatSender(_resolve_send_handle())
     raise RuntimeError(
-        f"unknown RELAY_TRANSPORT: {transport!r} (expected 'imessage' or 'telegram')"
+        f"unknown RELAY_TRANSPORT: {transport!r} "
+        "(expected 'imessage', 'telegram', 'discord', or 'slack')"
     )
