@@ -44,6 +44,22 @@ email_triggers:
     - time sensitive
     - asap
 
+  # Optional LLM-classified tier. When enabled, emails that DON'T match
+  # a sender allowlist or urgency keyword get a single Haiku call —
+  # "does this need a direct personal response?" — and YES results
+  # join the alert batch alongside rules-flagged emails.
+  #
+  # Catches contextual urgency the rules-based filter misses
+  # (e.g. "hey can you call me when you get a chance" from a friend
+  # whose address isn't on the allowlist).
+  #
+  # Cost: ~$0.001 per classified email on Haiku. Pre-filters automated
+  # senders (no-reply@, notifications@, etc.) before calling. The
+  # per-check cap is defensive against pathological bulk-mail days.
+  llm_classification:
+    enabled: false
+    max_per_check: 30
+
 # Delivery watch
 # ──────────────
 # When a carrier sends an "out for delivery" or "delivered" email,

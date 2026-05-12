@@ -486,12 +486,112 @@ def _short_sender(from_header: str) -> str:
     return s or "?"
 
 
-# Haiku model used to summarize flagged emails for the alert. Cheaper +
-# faster than Sonnet; sufficient for "what's the ask + suggest a reply"
-# triage. Switch via SUMMARIZER_MODEL if needed.
+# Haiku model used for the email-watch helpers (summarizer + classifier).
+# Cheaper + faster than Sonnet; both tasks are single-shot text-in/text-
+# out where Haiku quality matches Sonnet. Override via SUMMARIZER_MODEL.
 _SUMMARIZER_MODEL = os.environ.get("SUMMARIZER_MODEL", "claude-haiku-4-5-20251001")
 _SUMMARIZER_MAX_BODY_CHARS = 4000  # cap input to keep Haiku call bounded
 _SUMMARIZER_MAX_TOKENS = 200
+
+# Cost-control cap for the LLM classifier (per fire). The classifier
+# only runs on emails that DIDN'T match the rules-based filter, and
+# the seen-id dedup means each email is classified at most once, so
+# this cap is mostly defensive against pathological bulk-mail days.
+_LLM_CLASSIFIER_MAX_PER_CHECK = 30
+_LLM_CLASSIFIER_BODY_CHARS = 1500  # tighter than summarizer — 1 word out
+
+# Cheap pre-filter: substrings in the From header that almost always
+# mean "automated / never worth a personal response." Saves a Haiku
+# call per match on a bulky inbox day.
+_AUTOMATED_SENDER_PATTERNS = (
+    "no-reply",
+    "noreply",
+    "donotreply",
+    "do-not-reply",
+    "notifications@",
+    "notification@",
+    "newsletter@",
+    "marketing@",
+    "promotions@",
+    "promo@",
+    "alerts@",
+    "mailer-daemon",
+    "bounce@",
+    "@em.",
+    "@mailer.",
+    "@notify.",
+)
+
+
+def _is_automated_sender(from_header: str) -> bool:
+    """Heuristic: From header looks like a bulk-mailer / automated source."""
+    s = (from_header or "").lower()
+    return any(pat in s for pat in _AUTOMATED_SENDER_PATTERNS)
+
+
+def _classify_email_with_haiku(email: dict[str, Any]) -> bool:
+    """Call Haiku to decide whether this email needs a personal response.
+
+    Returns True only when the classifier is confident — the prompt is
+    biased toward NO to keep false positives low. Failure (no body,
+    API error) returns False so we never wake the principal up on a
+    Haiku hiccup.
+    """
+    try:
+        body = _fetch_email_body(email["id"])
+    except Exception as e:  # noqa: BLE001
+        print(f"[email_watch] classifier body fetch failed: {e}", file=sys.stderr)
+        body = ""
+    if not body:
+        body = email.get("snippet") or ""
+    if not body.strip():
+        return False
+
+    body_capped = body[:_LLM_CLASSIFIER_BODY_CHARS]
+    prompt = (
+        "You're triaging an unread email. A rules-based filter already "
+        "caught the obvious matches; this is for edge cases.\n"
+        "\n"
+        "Answer in EXACTLY one word — YES or NO — whether this email "
+        "needs a direct personal response or action from the recipient.\n"
+        "\n"
+        "Bias toward NO. Only YES for:\n"
+        "  - A real person (not a company) asking a question or making a request\n"
+        "  - A vendor or colleague waiting on the recipient's input\n"
+        "  - Time-sensitive personal communications\n"
+        "\n"
+        "NO for:\n"
+        "  - Newsletters, digests, marketing\n"
+        "  - Automated notifications (shipping, calendars, password resets)\n"
+        "  - FYI broadcasts without explicit ask\n"
+        "  - Receipts, confirmations, status updates\n"
+        "  - Anything the recipient could safely ignore for a week\n"
+        "\n"
+        "--- EMAIL ---\n"
+        f"From: {email.get('from', '')}\n"
+        f"Subject: {email.get('subject', '') or '(no subject)'}\n"
+        f"\n"
+        f"{body_capped}"
+    )
+
+    try:
+        import anthropic
+
+        client = anthropic.Anthropic()
+        resp = client.messages.create(
+            model=_SUMMARIZER_MODEL,
+            max_tokens=4,  # we only need "YES" or "NO"
+            messages=[{"role": "user", "content": prompt}],
+        )
+        out = "".join(
+            b.text for b in resp.content if getattr(b, "type", "") == "text"
+        ).strip().upper()
+    except Exception as e:  # noqa: BLE001
+        print(f"[email_watch] classifier call failed: {e}", file=sys.stderr)
+        return False
+    # Be strict about the YES check — any other token (including "MAYBE"
+    # or "PROBABLY") falls through to False.
+    return out.startswith("YES")
 
 
 def _summarize_flagged_email(email: dict[str, Any]) -> dict[str, str]:
@@ -643,14 +743,43 @@ def _fire_email_watch(store: MemoryStore, config: dict[str, Any], now: datetime)
         return
 
     flagged: list[tuple[dict[str, Any], str]] = []
+    # Track emails freshly seen in THIS fire (i.e. not previously seen
+    # in past fires). Only these are candidates for the LLM classifier;
+    # anything already in `seen` at fire-start was processed previously.
+    this_fire_new: list[dict[str, Any]] = []
     for email in emails:
         eid = email["id"]
         if eid in seen:
             continue
         seen.add(eid)
+        this_fire_new.append(email)
         matched, reason = _email_matches_rules(email, senders, keywords)
         if matched:
             flagged.append((email, reason))
+
+    # Optional LLM-classified tier: catches contextual urgency the rules-
+    # based filter misses ("hey can you call me when you get a chance"
+    # from a friend). Only runs on emails that DIDN'T match a rule —
+    # rules already caught the high-confidence stuff. Bounded by both
+    # a per-fire cap and an automated-sender pre-filter to keep cost
+    # trivial (typical: ~$0.05/day; worst case at the cap: ~$0.018/fire).
+    llm_cfg = (cfg.get("llm_classification") or {})
+    if llm_cfg.get("enabled"):
+        max_per_check = int(llm_cfg.get("max_per_check", _LLM_CLASSIFIER_MAX_PER_CHECK))
+        already_flagged_ids = {e["id"] for e, _ in flagged}
+        classified = 0
+        for email in this_fire_new:
+            if classified >= max_per_check:
+                break
+            if email["id"] in already_flagged_ids:
+                continue
+            if _is_automated_sender(email.get("from", "")):
+                continue
+            classified += 1
+            if _classify_email_with_haiku(email):
+                flagged.append((email, "llm: needs personal response"))
+        if classified:
+            print(f"[email_watch] llm classifier ran on {classified} email(s)")
 
     # Cap and persist seen set.
     if len(seen) > _EMAIL_WATCH_SEEN_CAP:

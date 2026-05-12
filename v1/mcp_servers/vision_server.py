@@ -33,9 +33,12 @@ from claude_agent_sdk.types import McpSdkServerConfig
 
 from memory.store import MemoryStore
 
-# Vision-capable models. Keep configurable via env so we can switch to
-# a cheaper one for description-only flows without touching code.
-DEFAULT_MODEL = "claude-sonnet-4-6"
+# Vision-capable model. Default to Haiku 4.5: image-description quality
+# matches Sonnet for the everyday cases (screenshots, photos, receipts,
+# whiteboards, album shots) at roughly 5-10× lower cost. Override via
+# CLAUDE_VISION_MODEL for tasks that need denser reasoning over images
+# (complex diagrams, multi-step OCR + interpretation).
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 MAX_TOKENS = 1024
 SIPS_PATH = "/usr/bin/sips"
 

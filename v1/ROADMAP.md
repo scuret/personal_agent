@@ -66,12 +66,7 @@ Each item lists what it adds, why it's not in yet, and what unblocks it.
 - **NOT remote-buildable.**
 - **Effort:** ~hour, but with a known low ceiling on what it can actually do.
 
-### LLM-classified email watch
-- **What:** Layer a Haiku-based classifier on top of the existing rules-based email watch. After the rules pass (sender allowlist + urgency keywords), any remaining new unread emails get a single short Haiku call: "is this urgent or does it require a direct personal response?" → if yes, included in the same notification batch. Catches contextual urgency that pure keyword/sender matching misses ("Hey can you call me when you get a chance" from a friend, etc.).
-- **Why deferred:** The rules-only version (commit `3fc4584` + `bd1168a`) is in production today. We agreed to ship that first and only layer the LLM tier if the rules-only false-negative rate proves too high in real use. Wait for a few weeks of usage data before deciding.
-- **Unblocks:** Pure code on top of the existing `_fire_email_watch` in `scheduler/triggers.py`. No new auth — uses the existing `ANTHROPIC_API_KEY`. **Remote-buildable.**
-- **Cost:** Haiku at ~$1/M input tokens; ~50 unread emails/day × ~200 tokens each = ~$0.01/day.
-- **Effort:** ~hour (classifier function + prompt + integration with the rules-pass-through, plus rate-limiting so a flurry of "yes" classifications batches into one notification not N pings).
+### ~~LLM-classified email watch~~ — shipped (`scheduler/triggers.py` `_classify_email_with_haiku` runs on emails that miss the rules-based filter when `email_triggers.llm_classification.enabled: true` in `triggers.yaml`. Pre-filters automated senders, capped per-fire via `max_per_check`. Bias-toward-NO prompt keeps false positives low. Haiku-tier cost; ~$0.05/day at typical volumes).
 
 ### ~~Discord transport~~ — shipped (`relay/discord_relay.py`; bot via developer portal, DM-only, allowlisted by user ID, image attachments via vision flow).
 ### ~~Slack transport~~ — shipped (`relay/slack_relay.py`; Socket Mode so no public URL needed, DM-only, allowlisted by Slack user ID, image attachments via vision flow).
