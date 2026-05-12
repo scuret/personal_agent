@@ -57,9 +57,14 @@ from mcp_servers.dropbox_server import create_dropbox_mcp_server  # noqa: E402
 from mcp_servers.github_server import create_github_mcp_server  # noqa: E402
 from mcp_servers.gmail_server import create_gmail_mcp_server  # noqa: E402
 from mcp_servers.linkedin_server import create_linkedin_mcp_server  # noqa: E402
+from mcp_servers.mail_apple_server import create_mail_apple_mcp_server  # noqa: E402
 from mcp_servers.memory_server import create_memory_mcp_server  # noqa: E402
+from mcp_servers.music_apple_server import create_music_apple_mcp_server  # noqa: E402
+from mcp_servers.notes_apple_server import create_notes_apple_mcp_server  # noqa: E402
 from mcp_servers.notion_server import create_notion_mcp_server  # noqa: E402
+from mcp_servers.photos_apple_server import create_photos_apple_mcp_server  # noqa: E402
 from mcp_servers.reddit_server import create_reddit_mcp_server  # noqa: E402
+from mcp_servers.reminders_apple_server import create_reminders_apple_mcp_server  # noqa: E402
 from mcp_servers.reminders_server import create_reminders_mcp_server  # noqa: E402
 from mcp_servers.sheets_server import create_sheets_mcp_server  # noqa: E402
 from mcp_servers.spotify_server import create_spotify_mcp_server  # noqa: E402
@@ -154,6 +159,44 @@ CANVA_TOOLS = [
 LINKEDIN_TOOLS = [
     "mcp__linkedin__linkedin_get_profile",
     "mcp__linkedin__linkedin_post_share",
+]
+
+# Apple-native sub-agents — macOS-only, no auth (AppleScript bridge).
+REMINDERS_APPLE_TOOLS = [
+    "mcp__reminders_apple__reminders_apple_list_lists",
+    "mcp__reminders_apple__reminders_apple_list",
+    "mcp__reminders_apple__reminders_apple_create",
+    "mcp__reminders_apple__reminders_apple_complete",
+    "mcp__reminders_apple__reminders_apple_delete",
+]
+NOTES_APPLE_TOOLS = [
+    "mcp__notes_apple__notes_apple_list",
+    "mcp__notes_apple__notes_apple_search",
+    "mcp__notes_apple__notes_apple_read",
+    "mcp__notes_apple__notes_apple_append",
+    "mcp__notes_apple__notes_apple_create",
+]
+PHOTOS_APPLE_TOOLS = [
+    "mcp__photos_apple__photos_apple_list_albums",
+    "mcp__photos_apple__photos_apple_recent",
+    "mcp__photos_apple__photos_apple_search_by_date",
+    "mcp__photos_apple__photos_apple_get_album",
+]
+MUSIC_APPLE_TOOLS = [
+    "mcp__music_apple__music_apple_now_playing",
+    "mcp__music_apple__music_apple_play",
+    "mcp__music_apple__music_apple_pause",
+    "mcp__music_apple__music_apple_next",
+    "mcp__music_apple__music_apple_previous",
+    "mcp__music_apple__music_apple_search_and_play",
+    "mcp__music_apple__music_apple_list_playlists",
+]
+MAIL_APPLE_TOOLS = [
+    "mcp__mail_apple__mail_apple_list_accounts",
+    "mcp__mail_apple__mail_apple_search",
+    "mcp__mail_apple__mail_apple_read",
+    "mcp__mail_apple__mail_apple_draft_reply",
+    "mcp__mail_apple__mail_apple_draft_new",
 ]
 
 WEATHER_TOOLS = [
@@ -281,6 +324,15 @@ def _has_dropbox_oauth() -> bool:
     return token_path.exists()
 
 
+def _is_macos() -> bool:
+    """Platform gate for Apple-native sub-agents — only register them when
+    the daemon is running on macOS. AppleScript via py-applescript isn't
+    available on Linux/Windows; gating here keeps the agent's tool surface
+    clean on those platforms (vs registering tools that always fail)."""
+    import sys
+    return sys.platform == "darwin"
+
+
 def _has_spotify_oauth() -> bool:
     """True iff Spotify app creds AND a cached refresh token are present."""
     if not _has_env("SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"):
@@ -375,6 +427,15 @@ def build_options(store: MemoryStore, model: str | None = None) -> ClaudeAgentOp
         ("spotify",   lambda: create_spotify_mcp_server(),         SPOTIFY_TOOLS,   _has_spotify_oauth),
         ("canva",     lambda: create_canva_mcp_server(),           CANVA_TOOLS,     _has_canva_oauth),
         ("linkedin",  lambda: create_linkedin_mcp_server(),        LINKEDIN_TOOLS,  _has_linkedin_oauth),
+        # Apple-native (AppleScript bridge). All gated on macOS — Linux/Windows
+        # forkers won't see these registered. No auth beyond the daemon
+        # running with permission to drive these apps (Automation prompt
+        # on first use).
+        ("reminders_apple", lambda: create_reminders_apple_mcp_server(), REMINDERS_APPLE_TOOLS, _is_macos),
+        ("notes_apple",     lambda: create_notes_apple_mcp_server(),     NOTES_APPLE_TOOLS,     _is_macos),
+        ("photos_apple",    lambda: create_photos_apple_mcp_server(),    PHOTOS_APPLE_TOOLS,    _is_macos),
+        ("music_apple",     lambda: create_music_apple_mcp_server(),     MUSIC_APPLE_TOOLS,     _is_macos),
+        ("mail_apple",      lambda: create_mail_apple_mcp_server(),      MAIL_APPLE_TOOLS,      _is_macos),
     ]
 
     mcp_servers: dict[str, Any] = {}

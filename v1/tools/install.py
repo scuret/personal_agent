@@ -59,6 +59,14 @@ SUBAGENTS: list[SubAgent] = [
     SubAgent("wikipedia", "Search + read articles", always_on=True),
     SubAgent("reddit", "Public-read subreddits / search / posts", always_on=True),
     SubAgent("reminders", "Schedule 'remind me at 4pm' iMessage pings", always_on=True),
+    # Apple-native (AppleScript). always_on=True because they need no
+    # auth, but they're only registered on macOS by agent_host's
+    # _is_macos gate — on Linux/Windows the agent won't see these tools.
+    SubAgent("reminders_apple", "Apple Reminders.app — list/create/complete/delete (macOS only)", always_on=True),
+    SubAgent("notes_apple", "Apple Notes.app — read/search/append/create (macOS only)", always_on=True),
+    SubAgent("photos_apple", "Apple Photos.app — albums/dates (read-only, macOS only)", always_on=True),
+    SubAgent("music_apple", "Apple Music.app — playback control on this Mac", always_on=True),
+    SubAgent("mail_apple", "Apple Mail.app — search + read + draft (never sends, macOS only)", always_on=True),
     SubAgent(
         "todoist",
         "Task management",
