@@ -95,6 +95,28 @@ Each item lists what it adds, why it's not in yet, and what unblocks it.
 - **NOT remote-buildable.**
 - **Effort:** ~half-day end-to-end (account creation, device sign-in, relay reconfiguration).
 
+### Multi-LLM provider support (Anthropic + OpenAI + Gemini)
+- **What:** Let the installer prompt for the LLM provider — Claude (current default), OpenAI ChatGPT, or Google Gemini — and have the rest of the agent stack work transparently regardless of which is configured. Primary driver is the public-template story: when the repo goes public, strangers should be able to use the provider they already have a subscription with.
+- **Why deferred:** The agent's entire reasoning loop runs on `claude-agent-sdk` which is Anthropic-native by design. Supporting other providers means building a `BackendClient` abstraction layer that translates between three sets of provider primitives:
+  - **Tool-call format.** All 26 MCP sub-agents register via `claude-agent-sdk`'s native MCP protocol. OpenAI uses "function calling," Gemini uses "function declarations" — each has different schema shapes for tool definitions, tool-call arguments, and tool results. Each MCP server would need a per-provider shim (or a translator at the SDK boundary).
+  - **System prompt + prompt caching.** Anthropic's prompt cache is what makes our 50-fact `build_system_prompt` injection cheap. OpenAI's cache is similar but the API shape differs; Gemini has its own. Provider-specific cache discipline.
+  - **PreToolUse safety hook.** The "never auto-send email" hook is implemented as a `claude-agent-sdk` PreToolUse hook. OpenAI's API doesn't have an equivalent — we'd need to wrap every tool-call execution in a Python pre-flight check. Gemini same.
+  - **Streaming primitives.** `process_turn_stream`, the SSE chat surface, and the audit-log archival all wrap `ClaudeSDKClient.receive_response()`'s async-iterator shape. Each provider's streaming API is different.
+  - **Reliability gap.** At the time of this writing, Claude is meaningfully better than GPT-4 / Gemini at long agentic tool-call chains (5+ tools across multiple sub-agents in a single brief fire). Multi-provider support needs to accept that the OpenAI / Gemini paths will hit lower tool-call success rates on briefs.
+- **Unblocks:**
+  - Define `BackendClient` Protocol in a new `agent_host/backends/` package
+  - Implement `AnthropicBackend` first (just wraps current behavior); confirm zero-regression
+  - Implement `OpenAIBackend` — translate MCP tool defs to function-calling JSON schemas, wrap tool execution loop, translate streaming chunks
+  - Implement `GeminiBackend` — same shape, different schemas
+  - Refactor every caller of `ClaudeSDKClient` / `build_options` / `process_turn` / `process_turn_stream` to go through the abstraction
+  - Add `LLM_PROVIDER` env var (anthropic/openai/gemini) + `OPENAI_API_KEY` + `GEMINI_API_KEY`
+  - Installer: add a provider-selection step (default anthropic)
+  - Personality + safety hook: reimplement the no-send rule per backend (Python pre-flight wrapper rather than SDK hook)
+  - Document the tool-call reliability trade-offs in README so forkers know what they're choosing
+- **Remote-buildable.**
+- **Effort:** ~2-3 weeks of focused work. Plus ongoing 3x maintenance cost for every new sub-agent or feature.
+- **Status:** Not committed. We agreed to keep this on the roadmap as a "do before / alongside repo-going-public" item, but only if/when the public-template story becomes a priority. For personal use, Claude stays the default; switching providers via env var would just be extra surface to maintain.
+
 ## Suggestion pile (not yet planned)
 
 Sub-agent ideas surfaced in conversation but not yet scoped onto the
