@@ -42,20 +42,7 @@ Plus operational tooling and infrastructure:
 
 Each item lists what it adds, why it's not in yet, and what unblocks it.
 
-### Pushover — backup push channel
-- **What:** Secondary delivery path that bypasses iOS Focus / DND for the morning brief, weekly review, urgent triggers, and reminders. iMessage stays the primary channel; Pushover is the safety net.
-- **Why deferred:** Just hadn't gotten to it yet.
-- **Unblocks:** Web signup at pushover.net for a user key + an app token. Both go in `.env`. **Remote-buildable.**
-- **Effort:** ~30 min.
-
 ### ~~Vector memory~~ — shipped (local sentence-transformers, `BAAI/bge-base-en-v1.5` default; messages + facts embed inline at archive; hybrid vector + LIKE re-rank in `memory_search_conversations` and `memory_recall_facts`; `tools/backfill_embeddings.py` for historical rows. Local-only, no API key — kept the fork-and-run story clean.)
-
-### Stocks / crypto
-- **What:** Sub-agent that returns price quotes, recent performance, basic fundamentals. "What's BTC at?" / "Show me NVDA's last 30 days."
-- **Why deferred:** Not surfaced in real usage yet.
-- **Unblocks:** Pick a provider — CoinGecko (no auth, crypto only) and/or Alpha Vantage (free key, stocks). Code only after that's chosen.
-- **Remote-buildable** (CoinGecko needs no signup; Alpha Vantage takes ~2 min on the web).
-- **Effort:** ~45 min.
 
 ### ~~Wikipedia~~ — shipped
 ### ~~Reddit (public read-only)~~ — shipped
@@ -131,7 +118,6 @@ Each entry has enough metadata to scope when promoted to "Planned."
 - **Apple Mail.app** — search/draft against non-Gmail accounts if you have any. ~hour.
 
 ### Information sources
-- **News headlines** — NYT or AP API; slots into the morning brief as a "what's happening" section. API key, free tier. ~45 min.
 - **Maps / places** — Google Places or OpenStreetMap Nominatim for "nearest X" / "drive time to Y" / "what's open near me." Google needs an API key (free tier); OSM is no-auth. ~hour.
 
 ### Finance

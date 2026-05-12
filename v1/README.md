@@ -504,9 +504,8 @@ local Mac access (browser-OAuth flows, device-bound account setup, etc.).
 
 Highlights:
 
-- **Remote-buildable now:** Pushover backup channel, vector memory (Voyage),
-  stocks/crypto, Wikipedia, Reddit (public read), group chat support in
-  the relay.
+- **Remote-buildable now:** group chat support in the relay, Discord /
+  Slack / SMS transports, LLM-classified email watch.
 - **Needs local Mac:** Calendar writes, Drive / Docs / Sheets, Dropbox
   OAuth refresh flow, Spotify, Canva, LinkedIn, dedicated agent identity.
 - **Operational improvements:** tighter brief/review prompts, audit-log
