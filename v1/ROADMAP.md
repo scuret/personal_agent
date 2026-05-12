@@ -73,17 +73,8 @@ Each item lists what it adds, why it's not in yet, and what unblocks it.
 - **Cost:** Haiku at ~$1/M input tokens; ~50 unread emails/day × ~200 tokens each = ~$0.01/day.
 - **Effort:** ~hour (classifier function + prompt + integration with the rules-pass-through, plus rate-limiting so a flurry of "yes" classifications batches into one notification not N pings).
 
-### Discord transport
-- **What:** Third option for `RELAY_TRANSPORT` alongside `imessage` and `telegram`. Discord bot you create at discord.com/developers/applications, allowlisted by user/server ID, supports text + image attachments (same vision flow as the other transports).
-- **Why deferred:** Just hadn't gotten to it.
-- **Unblocks:** Web setup (Discord Developer Portal → Application → Bot → token + invite link). Wire a `relay/discord_relay.py` that mirrors the structure of `telegram_relay.py`. Update `relay/sender.py` factory + `relay/run.py` dispatcher. **Remote-buildable.**
-- **Effort:** ~hour.
-
-### Slack transport
-- **What:** Fourth option for `RELAY_TRANSPORT`. Slack bot in a workspace; useful for work-context messaging or for keeping the agent in a Slack DM. Allowlisted by Slack user ID.
-- **Why deferred:** Not yet built; lower priority for personal use than Discord/Telegram unless you live in Slack for work.
-- **Unblocks:** Web setup at api.slack.com/apps (create app → enable Socket Mode for polling, or webhooks for events → bot token + signing secret). Mirrors the relay/telegram_relay.py pattern. **Remote-buildable.**
-- **Effort:** ~hour.
+### ~~Discord transport~~ — shipped (`relay/discord_relay.py`; bot via developer portal, DM-only, allowlisted by user ID, image attachments via vision flow).
+### ~~Slack transport~~ — shipped (`relay/slack_relay.py`; Socket Mode so no public URL needed, DM-only, allowlisted by Slack user ID, image attachments via vision flow).
 
 ### SMS via Twilio transport
 - **What:** Fifth option for `RELAY_TRANSPORT`. SMS bidirectional — universal reach (any phone, no app, no Apple/Google ecosystem dependency), bypasses every iMessage/DND/Focus quirk.
@@ -110,15 +101,15 @@ Sub-agent ideas surfaced in conversation but not yet scoped onto the
 planned list. Kept here so they don't get dropped between sessions.
 Each entry has enough metadata to scope when promoted to "Planned."
 
-### Apple-native (AppleScript, zero auth — local to the Mac)
-- **Apple Reminders.app** — bridge native iOS/macOS Reminders into the agent. Useful alongside Todoist for the lists that live in Reminders.app (Siri-created reminders, family shared lists). ~hour.
-- **Apple Notes.app** — read/append notes by title. "What did I write in my [X] note?" / "Append this to my running list." ~hour.
-- **Apple Photos.app** — search the local photo library by date or content tag. ~hour.
-- **Apple Music.app** — playback control alongside Spotify if you use both. ~45 min.
-- **Apple Mail.app** — search/draft against non-Gmail accounts if you have any. ~hour.
+### ~~Apple-native (AppleScript, zero auth — local to the Mac)~~ — shipped
+- ~~Apple Reminders.app~~ — `mcp_servers/reminders_apple_server.py` (list_lists / list / create / complete / delete)
+- ~~Apple Notes.app~~ — `mcp_servers/notes_apple_server.py` (list / search / read / append / create)
+- ~~Apple Photos.app~~ — `mcp_servers/photos_apple_server.py` (read-only; list_albums / recent / search_by_date / get_album. ML face/object/place search remains out of scope.)
+- ~~Apple Music.app~~ — `mcp_servers/music_apple_server.py` (now_playing / play / pause / next / previous / search_and_play / list_playlists). Coexists with Spotify.
+- ~~Apple Mail.app~~ — `mcp_servers/mail_apple_server.py` (list_accounts / search / read / draft_reply / draft_new). **Never sends** — same safety contract as Gmail.
 
 ### Information sources
-- **Maps / places** — Google Places or OpenStreetMap Nominatim for "nearest X" / "drive time to Y" / "what's open near me." Google needs an API key (free tier); OSM is no-auth. ~hour.
+- ~~**Maps / places**~~ — shipped (`mcp_servers/maps_server.py` with provider abstraction: Google Maps Platform when `GOOGLE_MAPS_API_KEY` set, free OpenStreetMap (Nominatim + OSRM) fallback. Tools: search_places, drive_time, geocode, reverse_geocode).
 
 ### Finance
 - **SimpleFIN banking** — read-only account balances + recent transactions. Open standard, personal-friendly, flat $1.50/month for all accounts. Could slot into the brief ("checking is at $X, $Y spent on groceries this week"). ~hour.
@@ -129,7 +120,7 @@ Each entry has enough metadata to scope when promoted to "Planned."
 - **1Password CLI** — search passwords / secure notes via the `op` CLI. Treat carefully — credentials never go into agent output; the agent only confirms presence and surfaces metadata. ~hour.
 
 ### Health / wellness
-- **Eight Sleep** — sleep score, HRV, heart rate, respiratory rate, bed/room temp, autopilot status. Slots cleanly into the morning brief ("slept 6h 42m, score 78, HRV down 4 from your week avg"). Uses the community-maintained `pyEight` library — email/password auth with refresh tokens. **Caveat:** unofficial API; could break if Eight Sleep changes endpoints. The sleep-context add to the brief makes it worth the maintenance risk. ~hour.
+- ~~**Eight Sleep**~~ — shipped (`mcp_servers/eightsleep_server.py` + `eightsleep_auth.py`. Email/password auth, session token cached locally, last-night + current-state read tools + set_temp write tool. Sleep block auto-injects into morning brief when configured. **Caveat:** unofficial API — could break if Eight Sleep changes endpoints; the sub-agent isolates failures so the rest of the agent keeps running).
 
 ## Operational improvements (not sub-agents)
 

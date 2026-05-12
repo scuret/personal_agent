@@ -115,6 +115,13 @@ PROMPTS: dict[str, str] = {
         "deliveries — the block is the source of truth. Omit the "
         "section entirely if no deliveries block was appended.\n"
         "\n"
+        "SLEEP DATA: if a LAST NIGHT'S SLEEP block is appended below, "
+        "lead the brief with a short conversational line acknowledging "
+        "the sleep score + total time. e.g. \"slept 6h 42m — score 78\" "
+        "or \"6 hours, HRV's lower than usual\". Don't enumerate every "
+        "metric in the block; pick the 1-2 most informative for the "
+        "principal's day. Omit if no sleep block.\n"
+        "\n"
         "Names from the Todoist block may be lightly paraphrased for "
         "brevity (\"send state farm insurance inventory and bills of "
         "sale\" → \"state farm docs\"; \"Put Grayson's braces on\" → "
@@ -1164,6 +1171,75 @@ def _render_deliveries_block(store: MemoryStore, hours: int = 24) -> str:
     return "\n".join(lines)
 
 
+def _render_sleep_block() -> str:
+    """Pull last-night Eight Sleep data and format as a brief block.
+
+    Returns "" if Eight Sleep isn't configured (no env creds) OR the
+    API call fails. Eight Sleep is an UNOFFICIAL API and can break
+    without notice — failure here must never block the brief itself,
+    just silently drop the sleep section.
+    """
+    if not (os.environ.get("EIGHT_EMAIL") or "").strip():
+        return ""
+    if not (os.environ.get("EIGHT_PASSWORD") or "").strip():
+        return ""
+    try:
+        from mcp_servers.eightsleep_auth import auth_headers, user_id  # noqa: E402
+
+        uid = user_id()
+        r = requests.get(
+            f"https://client-api.8slp.net/v1/users/{uid}/intervals",
+            headers=auth_headers(),
+            timeout=15,
+        )
+        r.raise_for_status()
+        intervals = (r.json() or {}).get("intervals") or []
+    except Exception as e:  # noqa: BLE001
+        print(f"[sleep block] eight sleep fetch failed: {e}", file=sys.stderr)
+        return ""
+    if not intervals:
+        return ""
+    latest = intervals[0]
+
+    def _avg(d: dict[str, Any] | None, *keys: str) -> Any:
+        if not isinstance(d, dict):
+            return None
+        for k in keys:
+            v = d.get(k)
+            if v is not None:
+                return v
+        return None
+
+    score = latest.get("score") or _avg(latest.get("sleepFitnessScore"), "total")
+    duration_s = latest.get("duration") or latest.get("totalSleep") or 0
+    hr = _avg(latest.get("heartRate"), "avg", "average")
+    hrv = _avg(latest.get("hrv"), "avg", "average")
+    resp = _avg(latest.get("respiratoryRate"), "avg", "average")
+    bed_temp = _avg(latest.get("bedTemperature"), "avg", "average")
+
+    lines = ["LAST NIGHT'S SLEEP (Eight Sleep — for brief context only):"]
+    if duration_s:
+        minutes = int(duration_s) // 60
+        if minutes >= 60:
+            h, m = divmod(minutes, 60)
+            lines.append(f"  time asleep: {h}h {m}m" if m else f"  time asleep: {h}h")
+        else:
+            lines.append(f"  time asleep: {minutes}m")
+    if score is not None:
+        lines.append(f"  sleep score: {score}")
+    if hr is not None:
+        lines.append(f"  avg HR: {hr:.0f} bpm")
+    if hrv is not None:
+        lines.append(f"  avg HRV: {hrv:.0f} ms")
+    if resp is not None:
+        lines.append(f"  avg respiratory rate: {resp:.1f} /min")
+    if bed_temp is not None:
+        lines.append(f"  avg bed temp: {bed_temp:.1f}°F")
+    if len(lines) == 1:
+        return ""  # nothing usable
+    return "\n".join(lines)
+
+
 def _todoist_block_for(trigger_name: str, store: MemoryStore | None = None) -> str:
     """Choose the right filter per trigger, pre-render, and prepend a
     progress note if overdue P1s were cleared since the last fire."""
@@ -1233,6 +1309,12 @@ async def _fire_trigger(trigger_name: str) -> None:
             prompt = (
                 f"{prompt}\n\n--- INJECTED DELIVERIES DATA ---\n"
                 f"{deliveries_block}\n--- END DELIVERIES DATA ---"
+            )
+        sleep_block = _render_sleep_block()
+        if sleep_block:
+            prompt = (
+                f"{prompt}\n\n--- INJECTED SLEEP DATA ---\n"
+                f"{sleep_block}\n--- END SLEEP DATA ---"
             )
     # Triggers run on Opus (stronger long-context fidelity) — the relay
     # stays on Sonnet for cost.

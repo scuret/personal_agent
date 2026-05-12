@@ -68,6 +68,31 @@ SUBAGENTS: list[SubAgent] = [
     SubAgent("music_apple", "Apple Music.app — playback control on this Mac", always_on=True),
     SubAgent("mail_apple", "Apple Mail.app — search + read + draft (never sends, macOS only)", always_on=True),
     SubAgent(
+        "maps",
+        "Places search, drive time, geocoding (Google if key set, OSM fallback)",
+        env_vars=["GOOGLE_MAPS_API_KEY"],
+        setup_url="https://console.cloud.google.com/apis/credentials",
+        auth_help=(
+            "Optional — leave GOOGLE_MAPS_API_KEY blank to use the free "
+            "OpenStreetMap fallback (Nominatim + OSRM, no auth). For "
+            "Google: enable Places API, Geocoding API, and Distance "
+            "Matrix API on a Google Cloud project, then create an API "
+            "key. Free tier covers personal use; needs a billing account "
+            "on file."
+        ),
+    ),
+    SubAgent(
+        "eightsleep",
+        "Eight Sleep — last-night metrics + current bed state + set_temp",
+        env_vars=["EIGHT_EMAIL", "EIGHT_PASSWORD"],
+        setup_url="https://www.eightsleep.com",
+        auth_help=(
+            "Email + password from your Eight Sleep account. UNOFFICIAL "
+            "API — could break if Eight Sleep changes endpoints. Sub-"
+            "agent isolates failures from the rest of the agent."
+        ),
+    ),
+    SubAgent(
         "todoist",
         "Task management",
         env_vars=["TODOIST_API_KEY"],

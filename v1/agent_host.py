@@ -54,10 +54,12 @@ from mcp_servers.canva_server import create_canva_mcp_server  # noqa: E402
 from mcp_servers.docs_server import create_docs_mcp_server  # noqa: E402
 from mcp_servers.drive_server import create_drive_mcp_server  # noqa: E402
 from mcp_servers.dropbox_server import create_dropbox_mcp_server  # noqa: E402
+from mcp_servers.eightsleep_server import create_eightsleep_mcp_server  # noqa: E402
 from mcp_servers.github_server import create_github_mcp_server  # noqa: E402
 from mcp_servers.gmail_server import create_gmail_mcp_server  # noqa: E402
 from mcp_servers.linkedin_server import create_linkedin_mcp_server  # noqa: E402
 from mcp_servers.mail_apple_server import create_mail_apple_mcp_server  # noqa: E402
+from mcp_servers.maps_server import create_maps_mcp_server  # noqa: E402
 from mcp_servers.memory_server import create_memory_mcp_server  # noqa: E402
 from mcp_servers.music_apple_server import create_music_apple_mcp_server  # noqa: E402
 from mcp_servers.notes_apple_server import create_notes_apple_mcp_server  # noqa: E402
@@ -199,6 +201,19 @@ MAIL_APPLE_TOOLS = [
     "mcp__mail_apple__mail_apple_draft_new",
 ]
 
+MAPS_TOOLS = [
+    "mcp__maps__maps_search_places",
+    "mcp__maps__maps_drive_time",
+    "mcp__maps__maps_geocode",
+    "mcp__maps__maps_reverse_geocode",
+]
+
+EIGHTSLEEP_TOOLS = [
+    "mcp__eightsleep__eightsleep_last_night",
+    "mcp__eightsleep__eightsleep_current_state",
+    "mcp__eightsleep__eightsleep_set_temp",
+]
+
 WEATHER_TOOLS = [
     "mcp__weather__weather_current",
     "mcp__weather__weather_forecast",
@@ -324,6 +339,20 @@ def _has_dropbox_oauth() -> bool:
     return token_path.exists()
 
 
+def _has_eightsleep() -> bool:
+    """True iff Eight Sleep email+password are present. The auth module
+    re-logs in as needed; no cached token gate (a stale cache just
+    triggers a re-login on first tool call)."""
+    return _has_env("EIGHT_EMAIL", "EIGHT_PASSWORD")
+
+
+def _maps_available() -> bool:
+    """Maps sub-agent is always available — falls back to OSM (no auth)
+    when GOOGLE_MAPS_API_KEY isn't set. The provider abstraction in
+    mcp_servers/maps_providers/__init__.py picks at startup time."""
+    return True
+
+
 def _is_macos() -> bool:
     """Platform gate for Apple-native sub-agents — only register them when
     the daemon is running on macOS. AppleScript via py-applescript isn't
@@ -436,6 +465,11 @@ def build_options(store: MemoryStore, model: str | None = None) -> ClaudeAgentOp
         ("photos_apple",    lambda: create_photos_apple_mcp_server(),    PHOTOS_APPLE_TOOLS,    _is_macos),
         ("music_apple",     lambda: create_music_apple_mcp_server(),     MUSIC_APPLE_TOOLS,     _is_macos),
         ("mail_apple",      lambda: create_mail_apple_mcp_server(),      MAIL_APPLE_TOOLS,      _is_macos),
+        # Maps — always-on; OSM fallback covers the no-key case so fork-
+        # and-run users get this for free.
+        ("maps",            lambda: create_maps_mcp_server(),            MAPS_TOOLS,            _maps_available),
+        # Eight Sleep — unofficial API, gated on email+password presence.
+        ("eightsleep",      lambda: create_eightsleep_mcp_server(),      EIGHTSLEEP_TOOLS,      _has_eightsleep),
     ]
 
     mcp_servers: dict[str, Any] = {}
