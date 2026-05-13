@@ -4,7 +4,7 @@ What's shipped, what's planned, and what each planned item needs to actually lan
 
 ## Shipped
 
-19 sub-agents currently live: **memory, archive (aggregate analytics), todoist, gmail, calendar (read + write), drive, docs, sheets, weather, vision, notion, github, web (Brave search + URL fetch), youtube, dropbox, spotify, wikipedia, reddit (public read), reminders.**
+27 sub-agents currently live: **memory, archive (aggregate analytics), todoist, gmail, calendar (read + write), drive, docs, sheets, weather, vision, notion, github, web (Brave search + URL fetch), youtube, dropbox, spotify, wikipedia, reddit (public read), reminders, reminders_apple, notes_apple, photos_apple, music_apple, mail_apple, maps (Google or OSM), eightsleep.**
 
 Plus a **local admin web UI** at `http://127.0.0.1:8780`:
 - FastAPI + Jinja2 + HTMX + Tailwind via CDN. No Node toolchain, no build step.
@@ -13,6 +13,10 @@ Plus a **local admin web UI** at `http://127.0.0.1:8780`:
 - History browser with per-conversation message threads + tool-call inspection
 - Observability: cost report, behavioral analytics (hour/day, tools, slow turns, lengths), live token health, SSE-tailed daemon logs
 - In-browser editors for `triggers.yaml` (live reload), `personality.md` (restart required), `.env` (secret-masked, restart required)
+- Facts + Reminders CRUD (list + create + deactivate / cancel) — replaces the Phase-1 read-only viewers
+- Settings dashboard at `/settings`: sub-agent status (configured / needs-auth / connected), one-click Connect buttons that spawn the matching `mcp_servers/*_auth.py` script and SSE-tail its stdout, plus a single button to render-and-bootstrap the four LaunchAgent plists
+- Install wizard at `/install`: detects a fresh checkout (`.env` missing or empty `ANTHROPIC_API_KEY`), bootstraps `.env` from `.env.example`, and walks the user into the settings page with a first-run banner. Home redirects to `/install` when first-run state is detected
+- Web chat image attachments: 📎 picker (cap 4 per turn), saves under `data/uploads/<conv_id>/`, prepends `[attachment: image at PATH (mime)]` markers same as iMessage / Telegram / Discord / Slack relays so the vision sub-agent flow is identical
 - Auto-started via `com.personal-agent.webui` LaunchAgent
 
 Plus operational tooling and infrastructure:
@@ -136,9 +140,6 @@ Each entry has enough metadata to scope when promoted to "Planned."
 - **Pocket / Instapaper** — surface saved-for-later reading; could slot into a weekly review. OAuth. ~hour.
 - **1Password CLI** — search passwords / secure notes via the `op` CLI. Treat carefully — credentials never go into agent output; the agent only confirms presence and surfaces metadata. ~hour.
 
-### Health / wellness
-- ~~**Eight Sleep**~~ — shipped (`mcp_servers/eightsleep_server.py` + `eightsleep_auth.py`. Email/password auth, session token cached locally, last-night + current-state read tools + set_temp write tool. Sleep block auto-injects into morning brief when configured. **Caveat:** unofficial API — could break if Eight Sleep changes endpoints; the sub-agent isolates failures so the rest of the agent keeps running).
-
 ## Operational improvements (not sub-agents)
 
 These aren't user-facing capabilities but improve daily use.
@@ -170,30 +171,19 @@ the audit is irreversible (anyone can clone before you tighten things).
 - **Verify:** `git log --all -p | grep -i <your-personal-search-term>` should return zero
   matches (or substitute any other personal address).
 
-### 2. Add a LICENSE
-- **What:** Without a LICENSE file the default is "all rights
-  reserved" — people can read but legally can't fork, modify, or
-  reuse. For a personal-utility template MIT is conventional.
-- **Action:** Drop a standard MIT LICENSE at the repo root with the
-  copyright year + holder name.
+### ~~2. Add a LICENSE~~ — shipped
+- MIT License at repo root (`/LICENSE`), 2026, Stephen Curet.
 
-### 3. Cost disclaimer in README
-- **What:** Public visitors might assume this is a free demo. It's
-  not — every Claude turn costs real money (~$0.05–0.10 typical;
-  build-day spikes much higher). The README should say so up front
-  so nobody runs it expecting free.
-- **Action:** Add a short "Costs" section near the top of README.md
-  noting Anthropic API usage costs + how `tools/cost_report.py` lets
-  you watch spend.
+### ~~3. Cost disclaimer in README~~ — shipped
+- "Costs" section near the top of `v1/README.md` covering Sonnet /
+  Opus / Haiku tiers, typical daily spend, and how to watch it via
+  `python -m tools.cost_report` or the web UI Observability page.
 
-### 4. Generalize README language for public audience
-- **What:** Current README assumes "the principal" is a specific
-  person and reads like internal documentation. For a public repo
-  it should read like a template ("fork this for your own use",
-  "this is a personal project — code is shared as-is").
-- **Action:** Reword the lead paragraphs + add a "What this is /
-  isn't" section. Drop any phrasing that assumes the reader is the
-  original author.
+### ~~4. Generalize README language for public audience~~ — shipped
+- Lead paragraphs rewritten with "personal project, shared as-is"
+  framing. New "What this is / what it isn't" section. References to
+  "the principal" in user-facing prose are reframed to "you" (the
+  term-of-art usage inside `personality.md` is intentional and stays).
 
 ### 5. Switch to GitHub noreply email for future commits
 - **What:** Every existing commit has author `scuret <<your-noreply-email>>`.
@@ -203,18 +193,15 @@ the audit is irreversible (anyone can clone before you tighten things).
   (find at github.com/settings/emails). Optionally rewrite past
   commits with `git filter-repo --email-callback` for consistency.
 
-### 6. Security disclosure path
-- **What:** Public repos receive vulnerability reports. Without a
-  designated path, reports may end up in public issues — bad.
-- **Action:** Add a brief SECURITY.md or a "security disclosure"
-  paragraph in README pointing at a non-public channel (private
-  email, GitHub Security Advisory, etc.).
+### ~~6. Security disclosure path~~ — shipped
+- `SECURITY.md` at repo root. GitHub Security Advisory is the only
+  supported channel (no maintainer email exposed). Scope + response
+  expectations + hardening notes for forkers are spelled out.
 
-### 7. CONTRIBUTING.md (optional)
-- **What:** If you'll accept issues/PRs from strangers, set
-  expectations: scope of the project, how to redact secrets when
-  filing bugs, code style.
-- **Action:** Short Markdown file at repo root.
+### ~~7. CONTRIBUTING.md~~ — shipped
+- `CONTRIBUTING.md` at repo root. "Welcome but lightly maintained"
+  posture, secret-redaction guidance, ruff + mypy expectations, fork-
+  vs-contribute-back guidance.
 
 ### 8. Repo metadata (optional)
 - **What:** GitHub topics + description + a clean README banner

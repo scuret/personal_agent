@@ -30,6 +30,8 @@ from web.templating import templates  # noqa: E402
 
 V1_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = V1_DIR / "web" / "static"
+UPLOADS_DIR = V1_DIR / "data" / "uploads"
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Bound to 127.0.0.1 only — no LAN exposure, no auth needed for v1.
 # If you ever expose this to a network, add session-cookie auth at
@@ -55,18 +57,24 @@ def make_app() -> FastAPI:
         redoc_url=None,
     )
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    # Serve user-uploaded chat attachments so the browser can render
+    # thumbnails of the image the user just sent. Bound to 127.0.0.1
+    # via the parent server, so this is single-user-only.
+    app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 
     # Import + register routes here (not at module top) so the test
     # harness can construct the app without firing every dependency.
-    from web.routes import (  # noqa: E402
+    from web.routes import (
         chat,
         config,
         conversations,
         daemon,
         facts,
         home,
+        install,
         observability,
         reminders,
+        settings,
         triggers,
     )
 
@@ -79,6 +87,8 @@ def make_app() -> FastAPI:
     app.include_router(triggers.router)
     app.include_router(daemon.router)
     app.include_router(config.router)
+    app.include_router(settings.router)
+    app.include_router(install.router)
 
     @app.exception_handler(404)
     async def _not_found(request: Request, _exc):

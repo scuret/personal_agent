@@ -4,7 +4,30 @@
 
 <div class="flex items-baseline justify-between mb-6">
     <h1 class="text-2xl font-semibold">facts <span class="text-zinc-500 text-base font-normal">· {{ total }} active</span></h1>
-    <p class="text-xs text-zinc-500">read-only in Phase 1 — CRUD coming</p>
+    <details>
+        <summary class="text-sm text-emerald-300 cursor-pointer hover:text-emerald-200 select-none">+ new fact</summary>
+        <form method="post" action="/facts"
+              class="mt-3 p-4 rounded-lg border border-zinc-800 bg-zinc-900/40 space-y-2 w-80">
+            <label class="block text-xs text-zinc-400">content
+                <textarea name="content" required rows="3"
+                          class="mt-1 w-full px-2 py-1 rounded bg-zinc-950 border border-zinc-800 text-sm
+                                 focus:outline-none focus:border-zinc-600"></textarea>
+            </label>
+            <label class="block text-xs text-zinc-400">category
+                <input name="category" value="note"
+                       class="mt-1 w-full px-2 py-1 rounded bg-zinc-950 border border-zinc-800 text-sm
+                              focus:outline-none focus:border-zinc-600" />
+            </label>
+            <label class="block text-xs text-zinc-400">confidence (0–1)
+                <input name="confidence" type="number" step="0.05" min="0" max="1" value="1.0"
+                       class="mt-1 w-full px-2 py-1 rounded bg-zinc-950 border border-zinc-800 text-sm
+                              focus:outline-none focus:border-zinc-600" />
+            </label>
+            <button class="w-full px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium">
+                save fact
+            </button>
+        </form>
+    </details>
 </div>
 
 {% if by_category %}
@@ -14,15 +37,21 @@
         <h2 class="text-sm uppercase tracking-wider text-zinc-400 mb-2">{{ category }} <span class="text-zinc-600">· {{ facts|length }}</span></h2>
         <ul class="divide-y divide-zinc-800 border border-zinc-800 rounded-lg overflow-hidden">
             {% for f in facts %}
-            <li class="px-4 py-3 bg-zinc-900/40">
-                <div class="text-sm">{{ f.content }}</div>
-                <div class="mt-1 text-xs text-zinc-500 flex gap-3">
-                    <span class="mono">#{{ f.id }}</span>
-                    <span>logged: {{ f.created_at[:19] }}</span>
-                    {% if f.recall_count and f.recall_count > 0 %}
-                    <span>recalled {{ f.recall_count }}×</span>
-                    {% endif %}
+            <li class="px-4 py-3 bg-zinc-900/40 flex items-start justify-between gap-3">
+                <div class="flex-1 min-w-0">
+                    <div class="text-sm">{{ f.content }}</div>
+                    <div class="mt-1 text-xs text-zinc-500 flex gap-3">
+                        <span class="mono">#{{ f.id }}</span>
+                        <span>logged: {{ f.created_at[:19] }}</span>
+                        {% if f.recall_count and f.recall_count > 0 %}
+                        <span>recalled {{ f.recall_count }}×</span>
+                        {% endif %}
+                    </div>
                 </div>
+                <form method="post" action="/facts/{{ f.id }}/deactivate"
+                      onsubmit="return confirm('Deactivate fact #{{ f.id }}? (soft-delete, can be undone in SQL)');">
+                    <button class="text-xs text-zinc-500 hover:text-rose-400">deactivate</button>
+                </form>
             </li>
             {% endfor %}
         </ul>

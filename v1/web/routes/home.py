@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
+from dotenv import dotenv_values
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from memory.store import MemoryStore
 from tools.cost_report import summary as cost_summary
@@ -14,6 +16,18 @@ from web import daemon_control
 from web.templating import templates
 
 router = APIRouter()
+
+_ENV_PATH = Path(__file__).resolve().parent.parent.parent / ".env"
+
+
+def _is_first_run() -> bool:
+    """True when there's no .env, or ANTHROPIC_API_KEY is empty. The /
+    handler redirects to /install in that case so a fresh checkout
+    doesn't dump the user onto an empty dashboard."""
+    if not _ENV_PATH.exists():
+        return True
+    parsed = dotenv_values(_ENV_PATH) or {}
+    return not (parsed.get("ANTHROPIC_API_KEY") or "").strip()
 
 
 def _store() -> MemoryStore:
@@ -46,12 +60,14 @@ def _next_triggers() -> list[dict[str, str]]:
             {"name": name, "when": dt.strftime("%a %b %d %I:%M %p %Z")}
             for name, dt in fires
         ]
-    except Exception:  # noqa: BLE001
+    except Exception:
         return []
 
 
-@router.get("/", response_class=HTMLResponse)
-async def home(request: Request) -> HTMLResponse:
+@router.get("/", response_class=HTMLResponse, response_model=None)
+async def home(request: Request) -> HTMLResponse | RedirectResponse:
+    if _is_first_run():
+        return RedirectResponse("/install", status_code=303)
     store = _store()
     daemons = daemon_control.status()
     cost = _today_cost()
@@ -60,7 +76,7 @@ async def home(request: Request) -> HTMLResponse:
 
     # Recent activity: last 5 conversations with their source + last
     # message preview. Read straight from the audit log.
-    recent = list(store._conn().execute(  # noqa: SLF001
+    recent = list(store._conn().execute(
         """SELECT c.id, c.source, c.started_at,
                   (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS msg_count
              FROM conversations c
@@ -79,6 +95,6 @@ async def home(request: Request) -> HTMLResponse:
             "pending_reminders": pending_reminders,
             "recent_convs": recent_convs,
             "next_fires": next_fires,
-            "now": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "now": datetime.now(UTC).isoformat(timespec="seconds"),
         },
     )

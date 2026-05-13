@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}install · personal_agent{% endblock %}
+{% block content %}
+
+<div class="max-w-2xl mx-auto">
+    <h1 class="text-3xl font-semibold mb-2">welcome</h1>
+    <p class="text-zinc-400 mb-6">
+        Looks like this is a fresh checkout — there's no <span class="mono">.env</span> with an
+        <span class="mono">ANTHROPIC_API_KEY</span> yet. Let's get you set up. This whole
+        wizard runs locally; nothing leaves your machine.
+    </p>
+
+    <div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-5 mb-4">
+        <h2 class="text-lg font-semibold mb-2">1. Bootstrap your .env</h2>
+        <p class="text-sm text-zinc-400 mb-3">
+            {% if env_exists %}
+            You already have a <span class="mono">.env</span> file — we'll skip the copy and jump straight to editing it.
+            {% else %}
+            We'll copy <span class="mono">.env.example</span> → <span class="mono">.env</span>
+            so you have a starting point with comments + every supported variable already in place.
+            {% endif %}
+        </p>
+        <form method="post" action="/install/bootstrap">
+            <button class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium">
+                {% if env_exists %}continue to settings{% else %}create .env + continue{% endif %}
+            </button>
+        </form>
+    </div>
+
+    <div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-5 mb-4">
+        <h2 class="text-lg font-semibold mb-2">2. What happens next</h2>
+        <ol class="text-sm text-zinc-300 space-y-2 list-decimal list-inside">
+            <li>You'll land on the <span class="mono">/settings</span> page with a first-run banner.</li>
+            <li>Open <a class="underline text-sky-400" href="/config/env">.env</a> and paste your
+                <span class="mono">ANTHROPIC_API_KEY</span>. Save.</li>
+            <li>For each sub-agent you want, click <em>connect</em> — the OAuth flow opens
+                a browser tab and the page tails the auth script's output live.</li>
+            <li>When you're done, click <em>install / reload LaunchAgents</em> to start
+                the relay + scheduler + log-rotation daemons on login.</li>
+        </ol>
+    </div>
+
+    <div class="rounded-lg border border-amber-900 bg-amber-950/30 p-5 text-sm text-amber-100">
+        <strong>Heads up:</strong> this agent costs real money to run (~$1–3/day at typical use; spikier on
+        build days). Watch spend at any time from <a class="underline" href="/observability">observability</a>
+        or via <span class="mono">python -m tools.cost_report</span>. There's no free tier and no demo mode.
+    </div>
+</div>
+{% endblock %}

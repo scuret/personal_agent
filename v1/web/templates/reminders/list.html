@@ -2,22 +2,60 @@
 {% block title %}reminders · personal_agent{% endblock %}
 {% block content %}
 
-<h1 class="text-2xl font-semibold mb-6">reminders</h1>
+<div class="flex items-baseline justify-between mb-6">
+    <h1 class="text-2xl font-semibold">reminders</h1>
+    <details>
+        <summary class="text-sm text-emerald-300 cursor-pointer hover:text-emerald-200 select-none">+ new reminder</summary>
+        <form method="post" action="/reminders"
+              class="mt-3 p-4 rounded-lg border border-zinc-800 bg-zinc-900/40 space-y-2 w-80">
+            <label class="block text-xs text-zinc-400">message
+                <input name="message" required
+                       class="mt-1 w-full px-2 py-1 rounded bg-zinc-950 border border-zinc-800 text-sm
+                              focus:outline-none focus:border-zinc-600" />
+            </label>
+            <label class="block text-xs text-zinc-400">when ({{ user_timezone }})
+                <input name="fire_at_local" type="datetime-local" required
+                       class="mt-1 w-full px-2 py-1 rounded bg-zinc-950 border border-zinc-800 text-sm
+                              focus:outline-none focus:border-zinc-600" />
+            </label>
+            <label class="block text-xs text-zinc-400">recurrence
+                <select name="recurrence"
+                        class="mt-1 w-full px-2 py-1 rounded bg-zinc-950 border border-zinc-800 text-sm
+                               focus:outline-none focus:border-zinc-600">
+                    <option value="">one-off</option>
+                    <option value="daily">daily</option>
+                    <option value="weekdays">weekdays</option>
+                    <option value="weekly">weekly</option>
+                    <option value="monthly">monthly</option>
+                </select>
+            </label>
+            <button class="w-full px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium">
+                schedule
+            </button>
+        </form>
+    </details>
+</div>
 
 <section class="mb-8">
     <h2 class="text-lg font-semibold mb-3">pending <span class="text-zinc-500 text-sm font-normal">· {{ pending|length }}</span></h2>
     {% if pending %}
     <ul class="divide-y divide-zinc-800 border border-zinc-800 rounded-lg overflow-hidden">
         {% for r in pending %}
-        <li class="px-4 py-3 bg-zinc-900/40 flex items-baseline justify-between">
-            <div>
+        <li class="px-4 py-3 bg-zinc-900/40 flex items-start justify-between gap-3">
+            <div class="flex-1 min-w-0">
                 <div class="text-sm">{{ r.message }}</div>
                 <div class="text-xs text-zinc-500 mt-1 flex gap-3">
                     <span class="mono">#{{ r.id }}</span>
                     {% if r.recurrence_rule %}<span>recurring: {{ r.recurrence_rule }}</span>{% endif %}
                 </div>
             </div>
-            <span class="mono text-xs text-zinc-400">{{ r.fire_at }}</span>
+            <div class="flex items-baseline gap-3 shrink-0">
+                <span class="mono text-xs text-zinc-400">{{ r.fire_at }}</span>
+                <form method="post" action="/reminders/{{ r.id }}/cancel"
+                      onsubmit="return confirm('Cancel reminder #{{ r.id }}?');">
+                    <button class="text-xs text-zinc-500 hover:text-rose-400">cancel</button>
+                </form>
+            </div>
         </li>
         {% endfor %}
     </ul>

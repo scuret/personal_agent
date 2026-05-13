@@ -1,23 +1,65 @@
 # Personal Agent — v1
 
-A personal AI agent that runs as a daemon on your computer, talks to you over **iMessage** or **Telegram** (your choice at install time), and helps with email, tasks, calendar, files, search, and more.
+A personal AI agent that runs as a daemon on your Mac, talks to you over **iMessage**, **Telegram**, **Discord**, or **Slack** (your choice at install time), and helps with email, tasks, calendar, files, sleep tracking, music, search, and more. There's also a local web UI at `http://127.0.0.1:8780`.
 
-This directory holds the v1 implementation. The historical design spec is in `../pre_requirements.md` (kept for reference; many decisions diverge from it).
+This is a **personal project**, shared publicly as-is so others can fork it for their own setup or copy ideas out of it. It's not a product, not a hosted service, and not actively marketed. If something doesn't fit your needs, fork it and change it — that's the intended use.
+
+## What this is / what it isn't
+
+**What this is:**
+
+- A single-user, local-first AI agent. Runs as four LaunchAgents on your Mac. Talks to one Anthropic API key under one user's control.
+- A Claude reasoning loop with 27 in-process MCP sub-agents wired up to apps you probably already use (Gmail, Calendar, Drive, Todoist, GitHub, Notion, Spotify, Apple Reminders/Notes/Music/Mail/Photos, Eight Sleep, Google/OpenStreetMap, Brave Search, etc.).
+- An iMessage/Telegram/Discord/Slack relay so you can text the agent from anywhere.
+- A scheduler that fires morning briefs, a Sunday weekly review, and email/delivery alerts.
+- A local-only web admin UI for configuration, observability, and a browser chat surface.
+
+**What this isn't:**
+
+- A hosted SaaS. There's no cloud, no signup, no shared infrastructure. You bring your own API keys and run it on your own machine.
+- A multi-tenant agent framework. There's a single allowlisted user; the safety model assumes that user owns the machine.
+- Production-grade. Maintained on the side as a personal tool. APIs and configs change between commits without deprecation notices.
+- Provider-agnostic. The agent uses Claude (via the Claude Agent SDK) end-to-end. Other LLM providers are tracked on the roadmap but not implemented.
+
+This directory (`v1/`) holds the implementation. The historical design spec is in `../pre_requirements.md` (kept for reference; many decisions diverge from it). License is MIT; see `../LICENSE`.
+
+## Costs
+
+Every Claude turn costs real money. This isn't a free demo. Typical operating cost on my own daily use:
+
+- **Conversational replies (Sonnet 4.6):** ~$0.01–0.05 per turn depending on context size.
+- **Scheduled briefs (Opus 4.7):** ~$0.10–0.30 per fire, twice a day (morning brief + Sunday review).
+- **Email/vision/classifier calls (Haiku 4.5):** sub-cent each.
+
+A typical day at moderate use lands around **$1–3** in Anthropic spend. Heavy build days (re-running scheduler triggers while iterating on personality) can spike to $10+.
+
+You watch the spend locally with:
+
+```bash
+python -m tools.cost_report          # last 7 days
+python -m tools.cost_report --days 30
+```
+
+The web UI's Observability page shows the same data.
+
+Provider-side billing dashboards (Anthropic console, Google Cloud, etc.) are the source of truth — the local cost report is a convenience.
 
 ## Choosing a transport
 
-Set `RELAY_TRANSPORT` in `.env` to either:
+Set `RELAY_TRANSPORT` in `.env` to one of:
 
 - **`imessage`** — macOS-only. Polls `~/Library/Messages/chat.db` and sends via AppleScript. Requires Full Disk Access + Automation permissions for the daemon. Native iPhone integration; the agent appears as a "Note to Self" thread (or a regular contact in `contact` mode).
 - **`telegram`** — Cross-platform. The agent runs as a bot you create via `@BotFather`; only allowlisted Telegram user IDs can talk to it. Works from any Mac, Linux, or Windows host with Python — no iMessage / chat.db dependency, and no iOS Focus / DND quirks.
+- **`discord`** — DM with a bot you create via the Discord Developer Portal. Allowlisted by Discord user ID. Image attachments route through the vision sub-agent.
+- **`slack`** — Socket Mode app (no public URL needed). DM-only, allowlisted by Slack user ID. Image attachments via vision.
 
-Switch transports any time by editing `.env` and restarting the relay (`launchctl kickstart -k gui/$(id -u)/com.personal-agent.relay`). Only one runs at a time. The interactive installer (`./install.sh`) walks you through choosing one.
+Switch transports any time by editing `.env` and restarting the relay (`launchctl kickstart -k gui/$(id -u)/com.personal-agent.relay`). Only one transport runs at a time per relay process. The interactive installer (`./install.sh`) walks you through choosing one.
 
 ---
 
 ## Capabilities at a glance
 
-The agent is a single Claude reasoning loop with nineteen in-process MCP sub-agents. You text it, it picks the right tools.
+The agent is a single Claude reasoning loop with 27 in-process MCP sub-agents. You text it, it picks the right tools.
 
 | Sub-agent | What it does | Auth | Free? |
 |---|---|---|---|
@@ -32,7 +74,7 @@ The agent is a single Claude reasoning loop with nineteen in-process MCP sub-age
 | **notion** | Search, read, query DBs, create page, append | Integration token | ✅ free |
 | **github** | Repos, issues, PRs, commits, search, create issue | PAT | ✅ free |
 | **weather** | Current + N-day forecast (Open-Meteo) | None needed | ✅ free |
-| **vision** | Describe iPhone-attached images (HEIC auto-converted) | Anthropic API | metered |
+| **vision** | Describe attached images (HEIC auto-converted) | Anthropic API | metered |
 | **web** | Brave Search + URL fetch | API key | ✅ 2K/mo free |
 | **youtube** | Search + video/channel metadata | API key | ✅ 10K units/day |
 | **dropbox** | Search, list, read text, share-link (OAuth refresh flow) | OAuth refresh | ✅ free |
@@ -40,8 +82,15 @@ The agent is a single Claude reasoning loop with nineteen in-process MCP sub-age
 | **wikipedia** | Search, summary, full article extract | None needed | ✅ free |
 | **reddit** | Subreddit top/hot, search, post + comments | None (public read) | ✅ free |
 | **reminders** | Schedule "remind me at 4pm to..." | None needed | ✅ free |
+| **reminders_apple** | Apple Reminders.app — list / create / complete / delete | AppleScript (macOS) | ✅ free |
+| **notes_apple** | Apple Notes.app — list / search / read / append / create | AppleScript (macOS) | ✅ free |
+| **photos_apple** | Apple Photos.app — albums + date-range search (read-only) | AppleScript (macOS) | ✅ free |
+| **music_apple** | Apple Music.app — playback control + library search | AppleScript (macOS) | ✅ free |
+| **mail_apple** | Apple Mail.app — read + draft (never sends) | AppleScript (macOS) | ✅ free |
+| **maps** | search_places / drive_time / geocode / reverse_geocode | Google Maps key, or free OSM | varies |
+| **eightsleep** | Last-night sleep summary + bed temp control | Email/password | ✅ free (req. Eight Sleep sub) |
 
-Plus: **scheduled morning brief** (~7:30 AM) and **Sunday weekly review** (8 PM) auto-pushed to iMessage.
+Plus: **scheduled morning brief** (~7:30 AM) and **Sunday weekly review** (8 PM) auto-pushed to your active transport.
 
 ---
 
@@ -56,7 +105,10 @@ LaunchAgent) and you get:
 - **History** — browse + search the conversation archive; per-conversation message thread with tool calls expanded
 - **Observability** — cost report, behavioral analytics (activity by hour/day, sub-agent usage, slow turns), token-health check, live-tailed daemon logs (SSE)
 - **Config** — in-browser editors for `triggers.yaml` (live reload, no restart), `personality.md` (restart required), `.env` (secret-masked, restart required)
-- **Facts + Reminders** — read-only viewers for now (CRUD in Phase 2 of the UI roadmap)
+- **Facts + Reminders** — list + create + deactivate / cancel directly from the browser
+- **Settings** — sub-agent status dashboard with one-click Connect buttons (subprocess + SSE streams the OAuth script's stdout live) and a "install / reload LaunchAgents" button
+- **Install wizard** — `/install` detects a fresh checkout (no `.env` / empty `ANTHROPIC_API_KEY`), bootstraps `.env` from `.env.example`, and walks you into the settings page with a first-run banner
+- **Chat image attachments** — drag-and-drop or 📎 picker; images saved under `data/uploads/<conv_id>/` and routed through the vision sub-agent same as the iMessage / Telegram / Discord / Slack relays
 
 Stack: FastAPI + Jinja2 + HTMX + Tailwind via CDN. No Node toolchain,
 no build step — clone the repo and it just runs after `./install.sh`.

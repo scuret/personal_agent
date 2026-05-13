@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
 
-from fastapi import APIRouter, Form, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from sse_starlette.sse import EventSourceResponse
 
 from agent_host import process_turn_stream
 from memory.store import MemoryStore
-from web.templating import templates
 from web.sessions import POOL
+from web.templating import templates
 
 router = APIRouter()
 
@@ -22,9 +24,33 @@ router = APIRouter()
 WEB_SOURCE = "web"
 CONVERSATION_GAP_HOURS = 4.0
 
+V1_DIR = Path(__file__).resolve().parent.parent.parent
+UPLOADS_DIR = V1_DIR / "data" / "uploads"
+
+# Browser uploads are capped here to keep the SSE URL well under typical
+# query-string limits when the [attachment: ...] markers are encoded
+# into it. iMessage's own typical limit is comparable.
+MAX_IMAGES_PER_TURN = 4
+ALLOWED_IMAGE_MIMES = {"image/jpeg", "image/png", "image/heic", "image/heif", "image/webp", "image/gif"}
+
+# FastAPI Form/File markers need to be evaluated at module import time
+# (B008: don't call functions in argument defaults) — hoist them here.
+_IMAGES_FIELD = File(default=[])
+
 
 def _store() -> MemoryStore:
     return MemoryStore()
+
+
+def _ext_from_mime(mime: str) -> str:
+    return {
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/heic": ".heic",
+        "image/heif": ".heif",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+    }.get(mime, ".bin")
 
 
 @router.get("/chat", response_class=HTMLResponse)
@@ -36,7 +62,7 @@ async def chat_shell(request: Request) -> HTMLResponse:
         source=WEB_SOURCE, gap_threshold_hours=CONVERSATION_GAP_HOURS
     )
     # Load history for this conversation.
-    rows = store._conn().execute(  # noqa: SLF001
+    rows = store._conn().execute(
         "SELECT role, content, tool_calls, created_at FROM messages "
         "WHERE conversation_id = ? ORDER BY id", (conv_id,)
     ).fetchall()
@@ -56,19 +82,66 @@ async def chat_shell(request: Request) -> HTMLResponse:
 
 
 @router.post("/chat/{conv_id}/send", response_class=HTMLResponse)
-async def send_message(request: Request, conv_id: str, text: str = Form(...)) -> HTMLResponse:
+async def send_message(
+    request: Request,
+    conv_id: str,
+    text: str = Form(""),
+    images: list[UploadFile] = _IMAGES_FIELD,
+) -> HTMLResponse:
     """Append the user's bubble immediately + return a placeholder
-    assistant bubble that will be filled via SSE."""
-    if not text.strip():
+    assistant bubble that will be filled via SSE.
+
+    Accepts optional image attachments. When images are attached, they
+    are saved under data/uploads/{conv_id}/ and prepended to the agent-
+    facing text as [attachment: image at PATH (mime)] markers — same
+    convention as the iMessage / Telegram / Discord / Slack relays so
+    the vision sub-agent works identically in every surface.
+    """
+    caption = (text or "").strip()
+    valid_images: list[UploadFile] = [f for f in images if f and f.filename]
+    if not caption and not valid_images:
         raise HTTPException(400, "empty message")
+    if len(valid_images) > MAX_IMAGES_PER_TURN:
+        raise HTTPException(
+            400, f"too many images (max {MAX_IMAGES_PER_TURN} per turn)"
+        )
+
+    conv_uploads = UPLOADS_DIR / conv_id
+    saved: list[dict[str, str]] = []
+    for f in valid_images:
+        mime = (f.content_type or "").lower()
+        if mime not in ALLOWED_IMAGE_MIMES:
+            raise HTTPException(400, f"unsupported image type: {mime!r}")
+        conv_uploads.mkdir(parents=True, exist_ok=True)
+        dest = conv_uploads / f"{uuid.uuid4().hex}{_ext_from_mime(mime)}"
+        dest.write_bytes(await f.read())
+        saved.append({
+            "path": str(dest),
+            "mime": mime,
+            "url": f"/uploads/{conv_id}/{dest.name}",
+        })
+
+    if saved:
+        marker_block = "\n".join(
+            f"[attachment: image at {a['path']} ({a['mime']})]" for a in saved
+        )
+        body = caption if caption else "(no caption)"
+        agent_text = f"{marker_block}\n{body}"
+    else:
+        agent_text = caption
+
     # The actual store.append_message + agent call happens in /stream;
-    # this just renders the optimistic UI.
+    # this just renders the optimistic UI. The pending bubble passes
+    # `agent_text` (markers + caption) into the SSE URL; the user-
+    # facing bubble shows only `caption` + thumbnails of `images`.
     return templates.TemplateResponse(
         request, "_chat_pending.html",
         {
             "conversation_id": conv_id,
-            "user_text": text,
-            "now": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "user_caption": caption,
+            "user_images": saved,
+            "agent_text": agent_text,
+            "now": datetime.now(UTC).isoformat(timespec="seconds"),
         },
     )
 
@@ -83,7 +156,7 @@ async def stream(conv_id: str, text: str):
     async def event_source():
         try:
             client = await POOL.get(conv_id, store)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             yield {"event": "error", "data": f"client startup failed: {e}"}
             return
         try:
@@ -103,7 +176,7 @@ async def stream(conv_id: str, text: str):
         except asyncio.CancelledError:
             # Browser closed the connection mid-stream; nothing to clean up.
             return
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             yield {"event": "error", "data": str(e)}
 
     return EventSourceResponse(event_source())

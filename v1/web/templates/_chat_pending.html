@@ -1,18 +1,37 @@
-{# Rendered when the user submits — shows their bubble immediately,
-   then a placeholder assistant bubble that subscribes to the SSE
-   stream and appends each text chunk as it arrives. #}
+{# Rendered when the user submits — shows their bubble immediately
+   (caption + any image thumbnails), then a placeholder assistant
+   bubble that subscribes to the SSE stream and appends each text
+   chunk as it arrives.
+
+   `agent_text` is what we pipe into the SSE URL — it includes the
+   [attachment: ...] markers so the agent's vision sub-agent flow
+   triggers, the same way iMessage / Telegram / Discord / Slack
+   relays prepare the turn. `user_caption` + `user_images` are the
+   user-facing presentation only. #}
 
 <div class="rounded-lg border border-sky-900 bg-sky-950/30 p-4">
     <div class="flex items-baseline justify-between mb-1">
         <span class="text-xs uppercase tracking-wider font-medium text-sky-300">you</span>
         <span class="text-xs mono text-zinc-500">{{ now }}</span>
     </div>
-    <div class="text-sm whitespace-pre-wrap">{{ user_text }}</div>
+    {% if user_images %}
+    <div class="flex flex-wrap gap-2 mb-2">
+        {% for img in user_images %}
+        <a href="{{ img.url }}" target="_blank" rel="noopener">
+            <img src="{{ img.url }}" alt="attachment"
+                 class="h-32 w-32 object-cover rounded border border-sky-900" />
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% if user_caption %}
+    <div class="text-sm whitespace-pre-wrap">{{ user_caption }}</div>
+    {% endif %}
 </div>
 
 <div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4"
      hx-ext="sse"
-     sse-connect="/chat/{{ conversation_id }}/stream?text={{ user_text | urlencode }}"
+     sse-connect="/chat/{{ conversation_id }}/stream?text={{ agent_text | urlencode }}"
      sse-close="done">
     <div class="flex items-baseline justify-between mb-1">
         <span class="text-xs uppercase tracking-wider font-medium text-zinc-400">agent</span>
