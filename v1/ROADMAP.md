@@ -236,26 +236,34 @@ documentation references happen as part of going-public #9.
   two-step opt-in. CSRF tokens / Origin header checks / `/uploads`
   auth remain out of scope as acceptable risk for v1.
 
-#### ~~H4. Scrub `triggers.yaml` from git history~~ — shipped (file removal)
+#### ~~H4. Scrub `triggers.yaml` from git history~~ — shipped (fully)
 - `git filter-repo --path v1/config/triggers.yaml --invert-paths`
   rewrote all 67 commits. The original 15-email allowlist no longer
-  appears in `git log -p` for any commit. HEAD moved from
-  `bdb7a16` → `229de80`; every prior hash changed too.
+  appears in `git log -p` for any commit.
+- Three follow-up `--blob-callback` / `--message-callback` passes
+  scrubbed residual references in tracked content + commit messages:
+  the `expected_sender` example in `triggers.yaml.example`, the
+  `sender_label` "Kara" string in the same file + a comment in
+  `scheduler/triggers.py`, the `📧 from Daleesa` example in
+  `personality.md`, and the `📧 from Daleesa` block in a commit
+  message body. All genericized to neutral placeholders
+  (`chair@example.org`, `"Chair"`, `Alex`).
+- Final state: `grep -i` over `git log --all -p` for any of the
+  original 18 personal-name / domain tokens returns **0 matches**.
+- HEAD moved through `bdb7a16` → `229de80` → ... → `fe6a744`
+  across the rewrites. Every prior hash changed.
 - Repo backup saved at
   `~/personal_agent_backup_before_H4_<timestamp>.tgz` (283 MB)
   before the rewrite, in case rollback is ever needed.
-- `origin` remote was wiped by filter-repo (its safety default) and
-  re-added immediately afterwards.
+- `origin` remote was wiped by filter-repo (its safety default) on
+  each pass and re-added at the end.
 - Force-push to GitHub is the next step but is **deferred until the
   user is ready to push**. The local repo is in the rewritten state
-  and will not match any pre-existing remote history.
-- **Residual references in tracked docs (separate decision):** the
-  `git log` verification line in this ROADMAP and an example in
-  `v1/config/triggers.yaml.example` still mention placeholder
-  personal-name strings (used as illustrative tokens, not real
-  contacts in active use). They're a smaller, separate scrub
-  controlled by going-public #9 (final secret sweep), not this
-  H4 entry.
+  and will not match any pre-existing remote history. When ready:
+      git push --force origin main
+- Note: `v1/config/triggers.yaml` (live, gitignored) still contains
+  the user's actual expected-arrivals watch with the real sender
+  email. That file is gitignored and never enters history — no leak.
 
 #### ~~H5. Move `EIGHT_PASSWORD` to macOS Keychain~~ — shipped
 - `keyring>=25.0` added to `pyproject.toml`. `mcp_servers/eightsleep_
@@ -392,19 +400,19 @@ private to public. Most are remote-doable. Don't push the repo public
 until everything in this section is done — once a public push lands,
 the audit is irreversible (anyone can clone before you tighten things).
 
-### ~~1. Scrub personal email history~~ — shipped (file removal phase)
-- `git filter-repo --path v1/config/triggers.yaml --invert-paths`
-  ran on 2026-05-14. All 67 commits rewritten; the 15-email
-  allowlist is gone from history. `git log -- v1/config/triggers.yaml`
-  returns empty (no commit ever touches the file in the current
-  history graph).
-- **Outstanding for the final pre-public sweep (item #9):**
-  placeholder references to personal-name search tokens in
-  `v1/ROADMAP.md` (this file, in the H4 verification example) and
-  `v1/config/triggers.yaml.example` (a commented expected_arrivals
-  example) still appear in tracked content. They're not the active
-  PII allowlist that the original H4 scope targeted, but they
-  should be genericized before any public push.
+### ~~1. Scrub personal email history~~ — shipped
+- Full scrub completed 2026-05-14 in 4 filter-repo passes (1 path
+  removal + 2 blob-callback content replacements + 1 message-callback
+  for a commit-message body). The original 15-email allowlist AND
+  every residual personal-name reference in tracked content / commit
+  messages have been genericized to neutral placeholders.
+- Verification: `grep -i` over `git log --all -p` for the 18
+  original tokens (daleesa*, kdouglass, bcuret, tfreeman, kingew4,
+  matthew.d.wohl, jonathandahlberg, jessicaandrelevich, alamb,
+  kdennis, awaide, greglaws, porschedriver, jasoncasey, ericfritsche,
+  bellthe2nd, @fulton-school, @monetagroup, @empower, @lumiconconsulting,
+  "Kara") returns 0 matches.
+- See ROADMAP "Security enhancements → H4" for the per-pass detail.
 - **Force-push deferred** — the local repo is in the rewritten
   state and won't match the (currently non-existent) origin. When
   ready to push: `git push --force origin main` after confirming
@@ -450,13 +458,11 @@ the audit is irreversible (anyone can clone before you tighten things).
   surfaces"; topics like `claude`, `agent`, `imessage`, `telegram`,
   `personal-assistant`, `mcp`.
 
-### 9. Final secret sweep
-- **What:** Belt-and-suspenders before push.
-- **Action:** Run `git log --all -p | grep -iE` against the secret
-  patterns from `tools/token_health.py` (sk-ant-, ghp_, ntn_, sl.u.,
-  AIzaSy, BSAGE0). Already verified clean as of commit `e2024ca`,
-  but re-run after step 1 since filter-repo will have rewritten
-  every commit hash.
+### ~~9. Final secret sweep~~ — shipped
+- Re-ran `git log --all -p | grep -ciE` against the API-key
+  patterns from `tools/token_health.py` (sk-ant-, ghp_, ntn_,
+  sl.u., AIzaSy, BSAGE, xoxb-, xoxp-) after the H4 rewrites. Zero
+  matches across the rewritten history.
 
 ## Pending verification
 
