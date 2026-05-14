@@ -393,12 +393,20 @@ sessions, but not on the implementation plan.
   hook for both Gmail and Apple Mail.
 - Group chats etiquette section in `personality.md`.
 
-## Going-public prep (do BEFORE flipping the repo to public)
+## Going-public prep — ✅ complete (2026-05-14)
 
-A checklist of items to complete before changing the GitHub repo from
-private to public. Most are remote-doable. Don't push the repo public
-until everything in this section is done — once a public push lands,
-the audit is irreversible (anyone can clone before you tighten things).
+The repo flipped to public at https://github.com/scuret/personal_agent
+on 2026-05-14 after every item in this checklist was confirmed shipped.
+All entries below are struck through with shipped notes for the record.
+
+**Residual caveat — old commits via direct URL:** GitHub keeps
+unreachable commits (the pre-rewrite `bdb7a16`-era hashes) accessible
+via direct URLs like `github.com/scuret/personal_agent/commit/<hash>`
+for up to 90 days even after a force-push removes them from history.
+If you need the old leaky commits gone immediately, contact GitHub
+Support and request garbage collection. After ~90 days they're
+auto-pruned. For most threat models this is acceptable — discovering
+the hashes requires guessing 7-char SHAs.
 
 ### ~~1. Scrub personal email history~~ — shipped
 - Full scrub completed 2026-05-14 in 4 filter-repo passes (1 path
@@ -452,13 +460,12 @@ the audit is irreversible (anyone can clone before you tighten things).
   posture, secret-redaction guidance, ruff + mypy expectations, fork-
   vs-contribute-back guidance.
 
-### 8. Repo metadata (optional)
-- **What:** GitHub topics + description + a clean README banner
-  improve discoverability.
-- **Action:** Set via `gh repo edit` or the web UI: description like
-  "personal AI agent on Claude Agent SDK with iMessage / Telegram
-  surfaces"; topics like `claude`, `agent`, `imessage`, `telegram`,
-  `personal-assistant`, `mcp`.
+### ~~8. Repo metadata~~ — shipped
+- Description set: "Personal AI agent on the Claude Agent SDK —
+  iMessage / Telegram / Discord / Slack surfaces, local web UI,
+  27 sub-agents. Single-user, local-first on Mac."
+- Topics: `agent`, `claude`, `claude-agent-sdk`, `imessage`,
+  `local-first`, `mcp`, `personal-assistant`, `telegram`.
 
 ### ~~9. Final secret sweep~~ — shipped
 - Re-ran `git log --all -p | grep -ciE` against the API-key
