@@ -457,25 +457,6 @@ def _fetch_recent_unread_gmail(limit: int = 50) -> list[dict[str, Any]]:
     return out
 
 
-def _email_matches_rules(
-    email: dict[str, Any], senders: list[str], keywords: list[str]
-) -> tuple[bool, str]:
-    """Return (matches, reason). Case-insensitive substring matching."""
-    from_field = (email.get("from") or "").lower()
-    subject = (email.get("subject") or "").lower()
-    snippet = (email.get("snippet") or "").lower()
-    haystack = f"{subject}\n{snippet}"
-    for sender in senders:
-        s = (sender or "").strip().lower()
-        if s and s in from_field:
-            return True, f"sender match: {sender}"
-    for kw in keywords:
-        k = (kw or "").strip().lower()
-        if k and k in haystack:
-            return True, f"keyword match: {kw}"
-    return False, ""
-
-
 def _short_sender(from_header: str) -> str:
     """Pull a friendly sender name from a 'Display Name <addr@example.com>' header."""
     s = (from_header or "").strip()
@@ -529,109 +510,98 @@ def _is_automated_sender(from_header: str) -> bool:
     return any(pat in s for pat in _AUTOMATED_SENDER_PATTERNS)
 
 
-def _classify_email_with_haiku(email: dict[str, Any]) -> bool:
-    """Call Haiku to decide whether this email needs a personal response.
+def _triage_email_with_haiku(
+    email: dict[str, Any],
+    today_local: datetime,
+    tz_name: str,
+) -> dict[str, Any]:
+    """Single Haiku call that BOTH decides "is this worth a phone ping?"
+    AND produces structured ping items when the answer is yes.
 
-    Returns True only when the classifier is confident — the prompt is
-    biased toward NO to keep false positives low. Failure (no body,
-    API error) returns False so we never wake the principal up on a
-    Haiku hiccup.
-    """
-    try:
-        body = _fetch_email_body(email["id"])
-    except Exception as e:  # noqa: BLE001
-        print(f"[email_watch] classifier body fetch failed: {e}", file=sys.stderr)
-        body = ""
-    if not body:
-        body = email.get("snippet") or ""
-    if not body.strip():
-        return False
+    Returns:
+        {"alert": bool, "items": list[str]}
 
-    body_capped = body[:_LLM_CLASSIFIER_BODY_CHARS]
-    prompt = (
-        "You're triaging an unread email. A rules-based filter already "
-        "caught the obvious matches; this is for edge cases.\n"
-        "\n"
-        "Answer in EXACTLY one word — YES or NO — whether this email "
-        "needs a direct personal response or action from the recipient.\n"
-        "\n"
-        "Bias toward NO. Only YES for:\n"
-        "  - A real person (not a company) asking a question or making a request\n"
-        "  - A vendor or colleague waiting on the recipient's input\n"
-        "  - Time-sensitive personal communications\n"
-        "\n"
-        "NO for:\n"
-        "  - Newsletters, digests, marketing\n"
-        "  - Automated notifications (shipping, calendars, password resets)\n"
-        "  - FYI broadcasts without explicit ask\n"
-        "  - Receipts, confirmations, status updates\n"
-        "  - Anything the recipient could safely ignore for a week\n"
-        "\n"
-        "--- EMAIL ---\n"
-        f"From: {email.get('from', '')}\n"
-        f"Subject: {email.get('subject', '') or '(no subject)'}\n"
-        f"\n"
-        f"{body_capped}"
-    )
+    Each item is a complete, action-shaped blurb (1-3 sentences) that
+    becomes one iMessage / Telegram bubble. A single email may produce
+    multiple items when it covers multiple distinct events (a school
+    newsletter with both a field trip and Field Day → two items).
 
-    try:
-        import anthropic
-
-        client = anthropic.Anthropic()
-        resp = client.messages.create(
-            model=_SUMMARIZER_MODEL,
-            max_tokens=4,  # we only need "YES" or "NO"
-            messages=[{"role": "user", "content": prompt}],
-        )
-        out = "".join(
-            b.text for b in resp.content if getattr(b, "type", "") == "text"
-        ).strip().upper()
-    except Exception as e:  # noqa: BLE001
-        print(f"[email_watch] classifier call failed: {e}", file=sys.stderr)
-        return False
-    # Be strict about the YES check — any other token (including "MAYBE"
-    # or "PROBABLY") falls through to False.
-    return out.startswith("YES")
-
-
-def _summarize_flagged_email(email: dict[str, Any]) -> dict[str, str]:
-    """Call Haiku to produce a short summary + recommended action.
-
-    Returns {"summary": str, "action": str}. On any failure (no body,
-    Haiku API error, parse weirdness) returns empty strings and the
-    caller falls back to the bare alert format. Email-watch is a
-    notification path — it must never crash the daemon.
+    On any failure (body fetch, Haiku error, output unparseable) returns
+    {"alert": False, "items": []} — email-watch is a pure notification
+    path and must never crash the daemon.
     """
     try:
         body = _fetch_email_body(email["id"])
     except Exception as e:  # noqa: BLE001
         print(f"[email_watch] body fetch failed: {e}", file=sys.stderr)
         body = ""
-    # Fall back to the Gmail snippet if full-body fetch returned nothing.
     if not body:
         body = email.get("snippet") or ""
     if not body.strip():
-        return {"summary": "", "action": ""}
+        return {"alert": False, "items": []}
 
     body_capped = body[:_SUMMARIZER_MAX_BODY_CHARS]
+    today_long = today_local.strftime("%A, %B %d, %Y")
+    today_iso = today_local.strftime("%Y-%m-%d")
+
     prompt = (
-        "You're triaging an email surfaced by an inbox-watcher to a "
-        "principal who'll see your output as a phone notification. "
-        "Read the email below and output EXACTLY two lines, no markdown, "
-        "no preamble, no labels:\n"
-        "  Line 1: one sentence describing what the sender is asking "
-        "for or telling them. If it's a thread, focus on the LATEST "
-        "message. Keep it under 25 words.\n"
-        "  Line 2: a concrete suggested action — either a recommended "
-        "reply ('confirm Tuesday', 'decline politely', 'forward to "
-        "Travis'), a disposition ('ignore — newsletter', 'archive — "
-        "FYI only'), or a clarifying question if a decision is needed "
-        "('reply yes or no?'). Keep it under 20 words.\n"
+        "You are an inbox triage agent for one user. Output goes to "
+        "their phone as iMessage bubbles, so be concise and action-shaped.\n"
+        "\n"
+        f"Today is {today_long} ({today_iso}). Timezone: {tz_name}.\n"
+        "\n"
+        "Read the email below. Two questions:\n"
+        "\n"
+        "(1) Is this worth pinging the user's phone? Bias toward NO. "
+        "Flag YES only for:\n"
+        "  - Real-person requests, decisions, RSVPs, or replies-needed\n"
+        "  - Logistics for upcoming events the user (or their family) "
+        "will attend: date, time, what-to-bring, what-to-decide, "
+        "drop-off / pick-up details\n"
+        "  - Deadlines and time-sensitive asks\n"
+        "  - School emails about their kids (events, schedules, "
+        "decisions, things to send in)\n"
+        "  - Meetings missing expected prep materials\n"
+        "Always NO for: newsletters / digests / marketing / receipts / "
+        "automated notifications / FYI with no ask / anything the user "
+        "could safely ignore for a week.\n"
+        "\n"
+        "(2) If YES: extract ONE OR MORE 'ping items'. An email about "
+        "two events = two items. An email about one event = one item. "
+        "Each item is self-contained — give the user everything they "
+        "need without opening the email.\n"
+        "\n"
+        "Item style:\n"
+        "  - Lead with a date/time hook. Use relative phrasing when "
+        "within 7 days: 'Tomorrow (Thurs 5/14) - ...', 'Today at 3pm - "
+        "...', 'Friday (5/15) - ...'. Beyond 7 days: 'Monday May 18 - "
+        "...'.\n"
+        "  - Include location, time, what to bring, decision needed, "
+        "or who to contact — whichever apply.\n"
+        "  - Plain text. No markdown. No 'see attached.' Use '&' over "
+        "'and' where it shortens.\n"
+        "  - 280 chars max per item.\n"
+        "  - Match the voice of: 'Tomorrow (Thurs 5/14) - Queeny Park "
+        "hike. Arrive 9:15 AM with bag lunch & proper shoes. Booster "
+        "seat drop-off Thurs AM if needed'.\n"
+        "\n"
+        "Output format — strict:\n"
+        "  ALERT: no\n"
+        "OR\n"
+        "  ALERT: yes\n"
+        "  ITEM:\n"
+        "  <ping text>\n"
+        "  ITEM:\n"
+        "  <ping text>\n"
+        "\n"
+        "Do not add preamble, postamble, or any other content outside "
+        "this format.\n"
         "\n"
         "--- EMAIL ---\n"
         f"From: {email.get('from', '')}\n"
         f"Subject: {email.get('subject', '') or '(no subject)'}\n"
-        f"\n"
+        f"Date: {email.get('date', '')}\n"
+        "\n"
         f"{body_capped}"
     )
 
@@ -648,60 +618,57 @@ def _summarize_flagged_email(email: dict[str, Any]) -> dict[str, str]:
             b.text for b in resp.content if getattr(b, "type", "") == "text"
         ).strip()
     except Exception as e:  # noqa: BLE001
-        print(f"[email_watch] summarizer call failed: {e}", file=sys.stderr)
-        return {"summary": "", "action": ""}
+        print(f"[email_watch] triage call failed: {e}", file=sys.stderr)
+        return {"alert": False, "items": []}
 
-    lines = [line.strip() for line in out.splitlines() if line.strip()]
-    return {
-        "summary": lines[0] if lines else "",
-        "action": lines[1] if len(lines) > 1 else "",
-    }
+    return _parse_triage_output(out)
 
 
-def _format_email_alert(
-    enriched: list[dict[str, Any]],
-) -> str:
-    """Render the iMessage / Telegram / Discord text for an email-watch fire.
+def _parse_triage_output(out: str) -> dict[str, Any]:
+    """Parse the ALERT:/ITEM: protocol used by _triage_email_with_haiku.
 
-    Single email gets the full 2-line treatment. Multi-email gets a
-    compressed one-line-per-email format so the notification doesn't
-    sprawl. Falls back to the previous bare format when the summarizer
-    didn't produce anything for an email.
+    Tolerant of stray whitespace and mixed casing. Malformed output or
+    an explicit `ALERT: no` both return {"alert": False, "items": []}.
     """
-    if len(enriched) == 1:
-        e = enriched[0]
-        email = e["email"]
-        sender = _short_sender(email.get("from", ""))
-        subject = email.get("subject") or "(no subject)"
-        lines = [
-            f"📧 from {sender}",
-            f"subject: {subject}",
-        ]
-        if e["summary"]:
-            lines.append("")  # blank line for breathing room on phone
-            lines.append(e["summary"])
-        if e["action"]:
-            lines.append(f"→ {e['action']}")
-        if not e["summary"] and not e["action"]:
-            # Fall back to the old reason-string format when summarizer
-            # produced nothing usable.
-            lines.append(f"({e['reason']})")
-        return "\n".join(lines)
+    alert = False
+    items: list[str] = []
+    in_item = False
+    current: list[str] = []
+    for raw in (out or "").splitlines():
+        s = raw.strip()
+        upper = s.upper()
+        if upper.startswith("ALERT:"):
+            decision = upper.split(":", 1)[1].strip()
+            alert = decision.startswith("YES")
+            in_item = False
+            current = []
+            continue
+        if upper == "ITEM:":
+            if in_item and current:
+                items.append("\n".join(current).strip())
+            in_item = True
+            current = []
+            continue
+        if in_item:
+            current.append(raw)
+    if in_item and current:
+        items.append("\n".join(current).strip())
 
-    out = [f"📧 {len(enriched)} important emails:"]
-    for e in enriched:
-        email = e["email"]
-        sender = _short_sender(email.get("from", ""))
-        subject = (email.get("subject") or "(no subject)")[:60]
-        out.append("")
-        out.append(f"— {sender}: {subject}")
-        if e["summary"]:
-            out.append(f"  {e['summary']}")
-        if e["action"]:
-            out.append(f"  → {e['action']}")
-        if not e["summary"] and not e["action"]:
-            out.append(f"  ({e['reason']})")
-    return "\n".join(out)
+    items = [it for it in items if it]
+    if not alert:
+        return {"alert": False, "items": []}
+    return {"alert": True, "items": items}
+
+
+def _format_email_alert_items(items: list[str]) -> str:
+    """Combine ping items into one text body for a single transport send.
+
+    Items get separated by a blank line so iMessage / Telegram still
+    visually segment them. Used when the sender path delivers a single
+    payload; the multi-bubble UX comes from sending each item back-to-
+    back via `_fire_email_watch` instead.
+    """
+    return "\n\n".join(it.strip() for it in items if it.strip())
 
 
 def _fire_email_watch(store: MemoryStore, config: dict[str, Any], now: datetime) -> None:
@@ -719,15 +686,8 @@ def _fire_email_watch(store: MemoryStore, config: dict[str, Any], now: datetime)
         if last_check is not None and (now - last_check).total_seconds() < every * 60:
             return  # not yet — throttled
 
-    senders = list(cfg.get("important_senders") or [])
-    keywords = list(cfg.get("urgency_keywords") or [])
-    if not senders and not keywords:
-        # No filters configured — nothing could match. Update state to keep
-        # throttling honest, then exit silently.
-        store.set_state(_EMAIL_WATCH_LAST_CHECK_KEY, now.isoformat())
-        return
-
-    # Load the seen-id set from state.
+    # Load the seen-id set from state. Each id is triaged at most once
+    # per its lifetime in the set.
     try:
         seen_list = json.loads(store.get_state(_EMAIL_WATCH_SEEN_KEY, "[]") or "[]")
         if not isinstance(seen_list, list):
@@ -742,44 +702,40 @@ def _fire_email_watch(store: MemoryStore, config: dict[str, Any], now: datetime)
         print(f"[email_watch] gmail fetch failed: {e}", file=sys.stderr)
         return
 
-    flagged: list[tuple[dict[str, Any], str]] = []
-    # Track emails freshly seen in THIS fire (i.e. not previously seen
-    # in past fires). Only these are candidates for the LLM classifier;
-    # anything already in `seen` at fire-start was processed previously.
-    this_fire_new: list[dict[str, Any]] = []
+    # LLM-only triage: every non-automated unread email gets one Haiku
+    # call that BOTH decides "ping the user?" AND produces structured
+    # ping items. The previous rules-based allowlist + urgency-keyword
+    # gate is gone — Haiku judges every candidate in context, which
+    # surfaces things like school logistics emails from senders the
+    # user hasn't explicitly named. Cost is bounded by max_per_check
+    # and the automated-sender pre-filter (no Haiku call for bulk-
+    # mailer From: headers).
+    triage_cfg = (cfg.get("llm_classification") or {})
+    max_per_check = int(triage_cfg.get("max_per_check", _LLM_CLASSIFIER_MAX_PER_CHECK))
+
+    triaged: list[tuple[dict[str, Any], list[str]]] = []
+    classified = 0
+    skipped_automated = 0
+    today_local = now  # `now` arrives in user-local tz already
+    tz_name = str(now.tzinfo) if now.tzinfo else "UTC"
     for email in emails:
         eid = email["id"]
         if eid in seen:
             continue
         seen.add(eid)
-        this_fire_new.append(email)
-        matched, reason = _email_matches_rules(email, senders, keywords)
-        if matched:
-            flagged.append((email, reason))
-
-    # Optional LLM-classified tier: catches contextual urgency the rules-
-    # based filter misses ("hey can you call me when you get a chance"
-    # from a friend). Only runs on emails that DIDN'T match a rule —
-    # rules already caught the high-confidence stuff. Bounded by both
-    # a per-fire cap and an automated-sender pre-filter to keep cost
-    # trivial (typical: ~$0.05/day; worst case at the cap: ~$0.018/fire).
-    llm_cfg = (cfg.get("llm_classification") or {})
-    if llm_cfg.get("enabled"):
-        max_per_check = int(llm_cfg.get("max_per_check", _LLM_CLASSIFIER_MAX_PER_CHECK))
-        already_flagged_ids = {e["id"] for e, _ in flagged}
-        classified = 0
-        for email in this_fire_new:
-            if classified >= max_per_check:
-                break
-            if email["id"] in already_flagged_ids:
-                continue
-            if _is_automated_sender(email.get("from", "")):
-                continue
-            classified += 1
-            if _classify_email_with_haiku(email):
-                flagged.append((email, "llm: needs personal response"))
-        if classified:
-            print(f"[email_watch] llm classifier ran on {classified} email(s)")
+        if _is_automated_sender(email.get("from", "")):
+            skipped_automated += 1
+            continue
+        if classified >= max_per_check:
+            # Out of budget for this fire — leave the id un-seen so the
+            # next fire picks it up. We added it to `seen` above, so
+            # remove it back out to preserve that property.
+            seen.discard(eid)
+            continue
+        classified += 1
+        result = _triage_email_with_haiku(email, today_local, tz_name)
+        if result.get("alert") and result.get("items"):
+            triaged.append((email, result["items"]))
 
     # Cap and persist seen set.
     if len(seen) > _EMAIL_WATCH_SEEN_CAP:
@@ -787,35 +743,41 @@ def _fire_email_watch(store: MemoryStore, config: dict[str, Any], now: datetime)
     store.set_state(_EMAIL_WATCH_SEEN_KEY, json.dumps(list(seen)))
     store.set_state(_EMAIL_WATCH_LAST_CHECK_KEY, now.isoformat())
 
-    if not flagged:
+    if classified:
+        print(
+            f"[email_watch] triaged {classified} email(s), "
+            f"flagged {len(triaged)}, skipped {skipped_automated} automated"
+        )
+
+    if not triaged:
         return
 
-    # For each flagged email, call Haiku to produce a summary + recommended
-    # action. Bounded cost (~$0.001/email) and bounded latency (~1-2s) —
-    # falls back to the bare format if Haiku errors so a notification
-    # path never silently drops an alert.
-    enriched: list[dict[str, Any]] = []
-    for email, reason in flagged:
-        summary = _summarize_flagged_email(email)
-        enriched.append({
-            "email": email,
-            "reason": reason,
-            "summary": summary["summary"],
-            "action": summary["action"],
-        })
-
-    text = _format_email_alert(enriched)
-
+    # Send each ping item as its own transport message so the user sees
+    # them as separate iMessage / Telegram bubbles — that's the visual
+    # shape the third-party reference agent uses and the action-shaped
+    # blurbs read much better when split.
     sender = make_sender()
-    ok, err = sender.send(text)
-    if ok:
-        print(f"[email_watch] notified — {len(flagged)} flagged email(s)")
+    total_items = sum(len(items) for _, items in triaged)
+    sent_items = 0
+    for _email, items in triaged:
+        for body in items:
+            ok, err = sender.send(body)
+            if ok:
+                sent_items += 1
+            else:
+                print(f"[email_watch] send failed: {err}", file=sys.stderr)
+
+    if sent_items:
+        print(
+            f"[email_watch] notified — {sent_items}/{total_items} item(s) "
+            f"from {len(triaged)} email(s)"
+        )
         # Stash each alerted email as a fact so the agent has a referent
         # when the principal replies "draft a response" in a separate
         # session — email-watch is a pure-Python notification with no
         # LLM turn, so this is the only handoff into agent-visible state.
         alerted_at = now.isoformat()
-        for email, reason in flagged:
+        for email, _items in triaged:
             try:
                 store.log_fact(
                     content=(
@@ -823,15 +785,13 @@ def _fire_email_watch(store: MemoryStore, config: dict[str, Any], now: datetime)
                         f"thread_id={email.get('thread_id', '')} "
                         f"from={email.get('from', '')} "
                         f"subject={email.get('subject', '') or '(no subject)'} "
-                        f"reason={reason} "
+                        f"reason=llm-triage "
                         f"alerted_at={alerted_at}"
                     ),
                     category="alerted_email",
                 )
             except Exception as e:  # noqa: BLE001 — bookkeeping shouldn't crash the daemon
                 print(f"[email_watch] log_fact failed: {e}", file=sys.stderr)
-    else:
-        print(f"[email_watch] send failed: {err}", file=sys.stderr)
 
 
 # ─── Tracking extraction ───────────────────────────────────────────────────
@@ -1083,6 +1043,195 @@ def _fire_delivery_watch(store: MemoryStore, config: dict[str, Any], now: dateti
                 print(f"[delivery_watch] log_fact failed: {exc}", file=sys.stderr)
     else:
         print(f"[delivery_watch] send failed: {err}", file=sys.stderr)
+
+
+# ─── Expected arrivals (gap detection) ────────────────────────────────────
+#
+# For each watched event with a known sender + subject pattern + date,
+# we periodically check whether the expected email has arrived. If it
+# hasn't and we're inside the lead-time window, we ping the user. Each
+# watch fires at most once per day so a stuck "Kara hasn't sent the
+# packet yet" state doesn't notify you every 12 hours forever.
+
+_EXPECTED_ARRIVALS_LAST_CHECK_KEY = "expected_arrivals_last_check"
+_EXPECTED_ARRIVALS_LAST_PING_PREFIX = "expected_arrivals_last_ping:"
+
+
+def _expected_arrival_already_received(
+    expected_sender: str,
+    expected_subject: str,
+    since_dt: datetime,
+) -> bool:
+    """True if Gmail has any message matching the watch criteria since
+    `since_dt`. Looks in inbox + archived (excludes spam/trash by default).
+
+    On any error returns False — we'd rather false-positive ping the user
+    than silently skip a real gap.
+    """
+    from mcp_servers.google_auth import build_service  # late import
+
+    try:
+        svc = build_service("gmail", "v1")
+    except Exception as e:  # noqa: BLE001
+        print(f"[expected_arrivals] gmail service init failed: {e}", file=sys.stderr)
+        return False
+
+    since_str = since_dt.strftime("%Y/%m/%d")
+    parts = [f"after:{since_str}", f"from:{expected_sender}"]
+    if expected_subject:
+        # Gmail's `subject:` accepts an unquoted phrase; quote it so
+        # spaces don't split into multiple AND-terms.
+        parts.append(f'subject:"{expected_subject}"')
+    query = " ".join(parts)
+    try:
+        resp = (
+            svc.users()
+            .messages()
+            .list(userId="me", q=query, maxResults=1)
+            .execute()
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[expected_arrivals] gmail query failed: {e}", file=sys.stderr)
+        return False
+    return bool(resp.get("messages"))
+
+
+def _format_expected_arrival_alert(
+    watch: dict[str, Any],
+    event_dt: datetime,
+    now_local: datetime,
+) -> str:
+    """Render the heads-up ping. Mirrors the third-party agent's voice:
+
+      Heads up - the Fulton Board meeting is Monday May 18 and no
+      prep materials have come in from Kara yet. Only 5 days out so
+      keep an eye on your inbox.
+    """
+    name = (watch.get("name") or "expected email").strip()
+    expected_sender = (watch.get("expected_sender") or "").strip()
+    # `sender_label` is an optional config override for how the sender
+    # gets named in the ping ("Chair" reads better than the bare email
+    # address). Fall back to the email's local-part with sensible
+    # title-casing when omitted.
+    sender_short = (watch.get("sender_label") or "").strip()
+    if not sender_short:
+        sender_short = _short_sender(expected_sender) or ""
+    if not sender_short or "@" in sender_short:
+        local = expected_sender.split("@", 1)[0] if "@" in expected_sender else expected_sender
+        sender_short = local.replace(".", " ").replace("_", " ").title() if local else "the sender"
+    # Trim to first name when the label is "First Last".
+    if " " in sender_short:
+        sender_short = sender_short.split()[0]
+
+    event_label = event_dt.strftime("%A %B %-d")
+    days_out = (event_dt.date() - now_local.date()).days
+    when_phrase = (
+        "today" if days_out == 0
+        else "tomorrow" if days_out == 1
+        else f"in {days_out} days"
+    )
+    urgency = (
+        f"only {days_out} days out" if 0 < days_out <= 7 else f"{days_out} days out"
+    )
+
+    return (
+        f"Heads up - {name} is {event_label} ({when_phrase}) and no "
+        f"email from {sender_short} yet. {urgency.capitalize()} so "
+        f"keep an eye on your inbox."
+    )
+
+
+def _fire_expected_arrivals(
+    store: MemoryStore, config: dict[str, Any], now: datetime
+) -> None:
+    """Check each configured watch; ping when the expected email is
+    overdue and we're inside the lead-time window. Cadence-throttled
+    via `expected_arrivals.cadence_hours` (default 12) and per-watch
+    daily-throttled so the same gap doesn't re-notify constantly.
+    """
+    cfg = (config.get("expected_arrivals") or {})
+    if not cfg.get("enabled"):
+        return
+    watches = cfg.get("watches") or []
+    if not watches:
+        return
+
+    cadence_hours = float(cfg.get("cadence_hours", 12))
+    last_check_str = store.get_state(_EXPECTED_ARRIVALS_LAST_CHECK_KEY)
+    if last_check_str:
+        try:
+            last_check = datetime.fromisoformat(last_check_str)
+        except ValueError:
+            last_check = None
+        if (
+            last_check is not None
+            and (now - last_check).total_seconds() < cadence_hours * 3600
+        ):
+            return
+    store.set_state(_EXPECTED_ARRIVALS_LAST_CHECK_KEY, now.isoformat())
+
+    tz = now.tzinfo
+    today = now.date()
+    for w in watches:
+        name = w.get("name") or "expected arrival"
+        event_date_str = (w.get("event_date") or "").strip()
+        expected_sender = (w.get("expected_sender") or "").strip()
+        expected_subject = (w.get("expected_subject") or "").strip()
+        try:
+            lead_time = int(w.get("lead_time_days", 7))
+        except (TypeError, ValueError):
+            lead_time = 7
+
+        if not event_date_str or not expected_sender:
+            continue
+
+        try:
+            event_date = datetime.fromisoformat(event_date_str).date()
+        except ValueError:
+            print(
+                f"[expected_arrivals] {name}: bad event_date "
+                f"{event_date_str!r}, skipping",
+                file=sys.stderr,
+            )
+            continue
+
+        # Outside the window in either direction.
+        if today > event_date:
+            continue  # event already passed
+        if (event_date - today).days > lead_time:
+            continue  # not yet inside lead time
+
+        # Per-watch daily throttle.
+        last_ping_key = (
+            f"{_EXPECTED_ARRIVALS_LAST_PING_PREFIX}{name}|{event_date_str}"
+        )
+        last_ping_str = store.get_state(last_ping_key)
+        if last_ping_str:
+            try:
+                last_ping = datetime.fromisoformat(last_ping_str)
+                if (now - last_ping).total_seconds() < 24 * 3600:
+                    continue
+            except ValueError:
+                pass
+
+        # Search Gmail since the start of the lead-time window.
+        since_dt = datetime.combine(
+            event_date, dtime(0, 0), tzinfo=tz
+        ) - timedelta(days=lead_time)
+        if _expected_arrival_already_received(
+            expected_sender, expected_subject, since_dt
+        ):
+            continue
+
+        event_dt = datetime.combine(event_date, dtime(0, 0), tzinfo=tz)
+        text = _format_expected_arrival_alert(w, event_dt, now)
+        sender = make_sender()
+        ok, err = sender.send(text)
+        if ok:
+            store.set_state(last_ping_key, now.isoformat())
+            print(f"[expected_arrivals] notified — {name}")
+        else:
+            print(f"[expected_arrivals] send failed: {err}", file=sys.stderr)
 
 
 def _fire_due_reminders(store: MemoryStore) -> None:
@@ -1711,6 +1860,14 @@ async def _run_daemon() -> None:
         except Exception as e:  # noqa: BLE001
             print(f"[delivery_watch error] {e}", file=sys.stderr)
 
+        # Expected arrivals — gap detection for emails you expect to
+        # receive ahead of known upcoming events. Cadence-throttled
+        # internally (default 12h) so it's cheap to call on every tick.
+        try:
+            _fire_expected_arrivals(store, config, now)
+        except Exception as e:  # noqa: BLE001
+            print(f"[expected_arrivals error] {e}", file=sys.stderr)
+
         # Re-read config so triggers.yaml edits take effect within ~30s.
         config = _load_config()
         await asyncio.sleep(TICK_SECONDS)
@@ -1770,7 +1927,8 @@ def main() -> None:
         idx = sys.argv.index("--run-now")
         if idx + 1 >= len(sys.argv):
             print(
-                "usage: --run-now <morning_brief|weekly_review|delivery_watch>",
+                "usage: --run-now <morning_brief|weekly_review|"
+                "delivery_watch|email_watch|expected_arrivals>",
                 file=sys.stderr,
             )
             sys.exit(2)
@@ -1786,10 +1944,31 @@ def main() -> None:
             config = _load_config()
             _fire_delivery_watch(store, config, datetime.now(timezone.utc))
             return
+        if trigger == "email_watch":
+            store = MemoryStore()
+            store.set_state(_EMAIL_WATCH_SEEN_KEY, "[]")
+            store.set_state(_EMAIL_WATCH_LAST_CHECK_KEY, "")
+            config = _load_config()
+            _fire_email_watch(store, config, datetime.now(_user_tz()))
+            return
+        if trigger == "expected_arrivals":
+            store = MemoryStore()
+            store.set_state(_EXPECTED_ARRIVALS_LAST_CHECK_KEY, "")
+            # Clear per-watch daily-ping throttles so a manual run
+            # re-pings on the same day.
+            rows = store._conn().execute(  # noqa: SLF001
+                "SELECT key FROM state WHERE key LIKE ?",
+                (f"{_EXPECTED_ARRIVALS_LAST_PING_PREFIX}%",),
+            ).fetchall()
+            for row in rows:
+                store.set_state(row["key"], "")
+            config = _load_config()
+            _fire_expected_arrivals(store, config, datetime.now(_user_tz()))
+            return
         if trigger not in PROMPTS:
             print(
                 f"unknown trigger: {trigger}. valid: "
-                f"{list(PROMPTS) + ['delivery_watch']}",
+                f"{[*PROMPTS, 'delivery_watch', 'email_watch', 'expected_arrivals']}",
                 file=sys.stderr,
             )
             sys.exit(2)

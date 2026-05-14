@@ -1,76 +1,72 @@
 # Trigger configuration — what wakes the scheduler up unprompted.
 #
 # This file is the COMMITTED TEMPLATE. The real config lives in
-# config/triggers.yaml (gitignored — your personal allowlist of
-# senders shouldn't be in version control). Generate the live file
-# by running ./install.sh and walking through the triggers step,
-# or hand-copy this template and edit.
+# config/triggers.yaml (gitignored). Generate the live file by running
+# ./install.sh and walking through the triggers step, or hand-copy
+# this template and edit.
 #
-# The scheduler re-reads the live file on every tick (~30s), so
-# changes take effect within seconds — no daemon restart needed.
+# The scheduler re-reads the live file on every tick (~30s), so changes
+# take effect within seconds — no daemon restart needed.
 
-# Real-time email pings
-# ─────────────────────
-# When an incoming Gmail message matches either condition below, the
-# scheduler sends a one-line notification over the active relay
-# transport (iMessage or Telegram). No auto-archive, no auto-reply —
-# just a heads-up.
+# Real-time email triage
+# ──────────────────────
+# Every unread email from a non-automated sender is run through one
+# Haiku 4.5 call ("triage"). Haiku decides whether the email is worth
+# a phone notification AND produces structured "ping items" — one
+# self-contained, action-shaped blurb per actionable thing in the
+# email. A single email can produce multiple items (school newsletter
+# covering both a field trip and Field Day → two pings).
 #
-# Defaults to disabled so a fresh install doesn't start pinging on
-# every "URGENT" newsletter subject. Flip `enabled: true` once you've
-# tuned the senders + keywords below for your inbox.
+# There is no sender allowlist and no urgency-keyword list any more.
+# Haiku reads the body in context. If you've used previous versions of
+# this file and have `important_senders` / `urgency_keywords` blocks,
+# they're now ignored — feel free to delete them.
 
 email_triggers:
 
   # Master switch. False = scheduler doesn't poll Gmail at all.
-  enabled: false
+  enabled: true
 
-  # How often the scheduler checks for new matching unread email.
-  # Lower = faster pings, more Gmail API calls. 15 min is reasonable.
+  # How often the scheduler checks for new unread email.
+  # Lower = faster pings, more Gmail API + Haiku calls.
   every_minutes: 15
 
-  # Specific email addresses or domain fragments. Match is case-
-  # insensitive substring against the From header. Domain fragments
-  # like "@family.com" match anyone at that domain.
-  # Examples: "boss@company.com", "@family.com", "alerts@bank.com"
-  important_senders: []
-
-  # Subject/snippet keyword matches. Case-insensitive substring.
-  # Anything matching here triggers a ping regardless of sender.
-  urgency_keywords:
-    - urgent
-    - deadline
-    - action required
-    - time sensitive
-    - asap
-
-  # Optional LLM-classified tier. When enabled, emails that DON'T match
-  # a sender allowlist or urgency keyword get a single Haiku call —
-  # "does this need a direct personal response?" — and YES results
-  # join the alert batch alongside rules-flagged emails.
-  #
-  # Catches contextual urgency the rules-based filter misses
-  # (e.g. "hey can you call me when you get a chance" from a friend
-  # whose address isn't on the allowlist).
-  #
-  # Cost: ~$0.001 per classified email on Haiku. Pre-filters automated
-  # senders (no-reply@, notifications@, etc.) before calling. The
-  # per-check cap is defensive against pathological bulk-mail days.
+  # Per-fire cap on Haiku calls. Caps the worst-case cost on a
+  # pathological bulk-mail day. Each call is ~$0.001, so the practical
+  # ceiling at 30 is ~$0.03/fire (~$3/day at 15-minute cadence).
   llm_classification:
-    enabled: false
     max_per_check: 30
+
+# Expected arrivals (gap detection)
+# ─────────────────────────────────
+# Watches the inbox for emails you EXPECT to receive ahead of known
+# upcoming events. When the event is within `lead_time_days` and no
+# matching email has arrived, the scheduler pings you with a "heads
+# up, no prep materials yet" alert. Each watch fires at most once per
+# day (re-checks until the event passes or the expected email lands).
+#
+# Disabled by default. Add entries that match your life — meetings
+# you sit on, regular deliveries, school-year boundaries, etc.
+
+expected_arrivals:
+  enabled: false
+  cadence_hours: 12
+  watches: []
+  # Example entry:
+  # - name: "Board meeting prep"
+  #   event_date: "2026-05-18"
+  #   expected_sender: "chair@example.org"
+  #   sender_label: "Chair"          # optional — friendlier than the email
+  #   expected_subject: "Meeting"   # substring match on subject
+  #   lead_time_days: 7
 
 # Delivery watch
 # ──────────────
-# When a carrier sends an "out for delivery" or "delivered" email,
-# fire a 📦 alert with the carrier name + subject. Distinct from
-# email_triggers above — uses stricter AND logic (carrier sender AND
-# delivery keyword required) so routine "your account was updated"
-# emails from carriers don't ping you.
-#
-# Senders and keywords default to the carriers in scheduler/triggers.py
-# (_DELIVERY_DEFAULT_SENDERS / _DELIVERY_DEFAULT_KEYWORDS) if the lists
-# below are empty. Override only if you want to narrow or extend.
+# Carrier "out for delivery / delivered" alerts. Stricter AND match
+# (carrier sender AND delivery keyword) so routine "your account was
+# updated" carrier emails don't ping you. Empty senders/keywords lists
+# fall back to the defaults baked into scheduler/triggers.py — UPS,
+# FedEx, Amazon, USPS, DHL + standard delivery-today phrases.
 #
 # Alerted deliveries are also logged as `delivery_today` facts so the
 # morning brief can roll them up without re-querying Gmail.

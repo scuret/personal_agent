@@ -24,7 +24,8 @@ Plus operational tooling and infrastructure:
 - Telegram relay (alternative transport, allowlisted user IDs, image-attachment support)
 - Pluggable transport via `RELAY_TRANSPORT` + `relay/run.py` dispatcher
 - Recurring reminders (daily / weekdays / weekly / monthly)
-- Rules-based email-watch trigger (sender allowlist + urgency keywords, polled every N minutes)
+- LLM-first email triage (one Haiku 4.5 call per non-automated unread email decides flag AND emits one or more action-shaped "ping items" with date/time, what-to-bring, decision needed; multi-event emails produce multiple pings; replaced the rules-based allowlist + urgency-keyword gate)
+- Expected-arrivals gap detection (named watches: when an event is within `lead_time_days` and no email has arrived from the expected sender with the expected subject, ping with "no email from X yet" — daily-throttled per watch)
 - Real-time delivery-watch trigger (UPS / FedEx / Amazon / USPS / DHL — extracts tracking number + carrier-specific URL from the email body, logs as `delivery_today` facts for brief rollup)
 - Email-watch → agent context handoff (`alerted_email` facts so the agent can recall the right email when the principal says "draft a response" from a different session)
 - Morning brief + Sunday weekly review scheduler with wallclock-based catchup (survives Mac sleep)
@@ -70,7 +71,7 @@ Each item lists what it adds, why it's not in yet, and what unblocks it.
 - **NOT remote-buildable.**
 - **Effort:** ~hour, but with a known low ceiling on what it can actually do.
 
-### ~~LLM-classified email watch~~ — shipped (`scheduler/triggers.py` `_classify_email_with_haiku` runs on emails that miss the rules-based filter when `email_triggers.llm_classification.enabled: true` in `triggers.yaml`. Pre-filters automated senders, capped per-fire via `max_per_check`. Bias-toward-NO prompt keeps false positives low. Haiku-tier cost; ~$0.05/day at typical volumes).
+### ~~LLM-classified email watch~~ — shipped, then evolved into LLM-FIRST email triage. The current implementation runs every non-automated unread email through one Haiku call that BOTH classifies AND produces structured ping items (see `_triage_email_with_haiku` in `scheduler/triggers.py`). The previous allowlist + urgency-keyword gate has been removed; Haiku judges in context.
 
 ### ~~Discord transport~~ — shipped (`relay/discord_relay.py`; bot via developer portal, DM-only, allowlisted by user ID, image attachments via vision flow).
 ### ~~Slack transport~~ — shipped (`relay/slack_relay.py`; Socket Mode so no public URL needed, DM-only, allowlisted by Slack user ID, image attachments via vision flow).

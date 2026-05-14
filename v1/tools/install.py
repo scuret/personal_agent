@@ -736,8 +736,11 @@ def _write_triggers_yaml(cfg: dict[str, Any]) -> None:
     mb = sched.get("morning_brief") or {}
     wr = sched.get("weekly_review") or {}
 
-    senders = list(et.get("important_senders") or [])
-    keywords = list(et.get("urgency_keywords") or [])
+    llm_cfg = et.get("llm_classification") or {}
+    max_per_check = int(llm_cfg.get("max_per_check", 30))
+    ea = cfg.get("expected_arrivals") or {}
+    ea_watches = list(ea.get("watches") or [])
+
     mb_include = list(mb.get("include") or [])
     wr_include = list(wr.get("include") or [])
 
@@ -748,19 +751,28 @@ def _write_triggers_yaml(cfg: dict[str, Any]) -> None:
     out.append("# This file is gitignored; the committed template is")
     out.append("# config/triggers.yaml.example.")
     out.append("")
+    out.append("# Real-time email triage. Every non-automated unread email")
+    out.append("# gets one Haiku 4.5 triage call that decides flag + emits")
+    out.append("# action-shaped ping items. No allowlist; no keyword list.")
     out.append("email_triggers:")
     out.append(f"  enabled: {str(bool(et.get('enabled', False))).lower()}")
     out.append(f"  every_minutes: {int(et.get('every_minutes', 15))}")
-    out.append("  important_senders:")
-    if senders:
-        for s in senders:
-            out.append(f"    - {s}")
-    else:
-        out.append("    []")
-    out.append("  urgency_keywords:")
-    if keywords:
-        for k in keywords:
-            out.append(f"    - {k}")
+    out.append("  llm_classification:")
+    out.append(f"    max_per_check: {max_per_check}")
+    out.append("")
+    out.append("expected_arrivals:")
+    out.append(f"  enabled: {str(bool(ea.get('enabled', False))).lower()}")
+    out.append(f"  cadence_hours: {int(ea.get('cadence_hours', 12))}")
+    out.append("  watches:")
+    if ea_watches:
+        for w in ea_watches:
+            out.append(f"    - name: \"{w.get('name', '')}\"")
+            out.append(f"      event_date: \"{w.get('event_date', '')}\"")
+            out.append(f"      expected_sender: \"{w.get('expected_sender', '')}\"")
+            if w.get("sender_label"):
+                out.append(f"      sender_label: \"{w['sender_label']}\"")
+            out.append(f"      expected_subject: \"{w.get('expected_subject', '')}\"")
+            out.append(f"      lead_time_days: {int(w.get('lead_time_days', 7))}")
     else:
         out.append("    []")
     out.append("")
@@ -816,11 +828,12 @@ def step_triggers(env: dict[str, str], enabled: set[str]) -> None:
         _ok(f"wrote {TRIGGERS_PATH}")
         return
 
-    print("Email watch pings you when an unread Gmail message matches either:")
-    print("  • a sender in your allowlist, OR")
-    print("  • a subject/snippet keyword in your urgency list.")
+    print("Email watch runs every non-automated unread email through one")
+    print("Haiku 4.5 triage call. Haiku decides whether to ping you AND")
+    print("writes the action-shaped blurb (logistics, date/time, what-to-")
+    print("bring, decision needed). No allowlist; no keyword list.")
     print()
-    print("Defaults to disabled until you've tuned the lists for your inbox.")
+    print("Typical cost: $0.10-$1/day depending on inbox volume.")
     print()
 
     enable = _yn(
@@ -839,52 +852,28 @@ def step_triggers(env: dict[str, str], enabled: set[str]) -> None:
         except ValueError:
             _warn(f"keeping {every_default}")
 
-    print()
-    print("Important senders (one per line OR comma-separated).")
-    print("Email addresses or domain fragments. Examples:")
-    print("  boss@company.com")
-    print("  @family.com           (matches anyone at that domain)")
-    print("  alerts@bank.com")
-    current_senders = list(et.get("important_senders") or [])
-    if current_senders:
-        print(f"  Current ({len(current_senders)} entries): see {TRIGGERS_PATH}")
-    print("Press enter to keep the current list. Type 'clear' to empty it.")
-    raw = _ask("Add senders (or empty / clear):", default="")
-    if raw.strip().lower() == "clear":
-        et["important_senders"] = []
-    elif raw.strip():
-        new_entries = _split_csv_or_lines(raw)
-        # De-dupe while preserving order; combine with existing
-        merged: list[str] = []
-        seen = set()
-        for s in current_senders + new_entries:
-            sl = s.lower()
-            if sl not in seen:
-                merged.append(s)
-                seen.add(sl)
-        et["important_senders"] = merged
+        llm_cfg = et.setdefault("llm_classification", {})
+        max_default = str(llm_cfg.get("max_per_check", 30))
+        max_raw = _ask(
+            "Max Haiku triage calls per fire?", default=max_default
+        )
+        try:
+            llm_cfg["max_per_check"] = max(1, int(max_raw))
+        except ValueError:
+            _warn(f"keeping {max_default}")
 
-    print()
-    print("Urgency keywords (subject/snippet substring matches).")
-    current_kw = list(et.get("urgency_keywords") or [])
-    if current_kw:
-        print(f"  Current: {', '.join(current_kw)}")
-    print("Press enter to keep current. 'clear' to empty. Or type a new")
-    print("comma-separated list to REPLACE the current keywords.")
-    raw = _ask("Keywords (or empty / clear):", default="")
-    if raw.strip().lower() == "clear":
-        et["urgency_keywords"] = []
-    elif raw.strip():
-        et["urgency_keywords"] = _split_csv_or_lines(raw)
+    # Drop the legacy keys quietly — they're ignored by the scheduler
+    # now, but leaving them in the rendered yaml is confusing.
+    et.pop("important_senders", None)
+    et.pop("urgency_keywords", None)
 
     _write_triggers_yaml(cfg)
     _ok(f"wrote {TRIGGERS_PATH}")
     if enable:
-        senders_count = len(et.get("important_senders") or [])
-        kw_count = len(et.get("urgency_keywords") or [])
+        cap = (et.get("llm_classification") or {}).get("max_per_check", 30)
         print(
-            f"  Email watch active: {senders_count} senders, {kw_count} keywords, "
-            f"every {et.get('every_minutes', 15)} min"
+            f"  Email watch active: every {et.get('every_minutes', 15)} "
+            f"min, up to {cap} Haiku calls per fire"
         )
     else:
         print("  Email watch disabled — set enabled=true in triggers.yaml when ready")
