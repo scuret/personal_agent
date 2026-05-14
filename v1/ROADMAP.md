@@ -432,13 +432,15 @@ the audit is irreversible (anyone can clone before you tighten things).
   "the principal" in user-facing prose are reframed to "you" (the
   term-of-art usage inside `personality.md` is intentional and stays).
 
-### 5. Switch to GitHub noreply email for future commits
-- **What:** Every existing commit has author `scuret <<your-noreply-email>>`.
-  Going public exposes that email on every commit. Past commits would
-  need filter-repo to fix; future commits can use a noreply alias.
-- **Action:** Set local git config to a GitHub-provided noreply email
-  (find at github.com/settings/emails). Optionally rewrite past
-  commits with `git filter-repo --email-callback` for consistency.
+### ~~5. Switch to GitHub noreply email for future commits~~ — shipped
+- Local `git config user.email` is now set to the GitHub-provided
+  noreply alias (`<id>+<login>@users.noreply.github.com`). Future
+  commits use it automatically.
+- All 68 historical commits also rewritten via
+  `git filter-repo --email-callback` to use the same noreply alias
+  in their author + committer fields. `git log --format='%ae' | sort -u`
+  returns one unique value — the noreply form. No real personal
+  email is exposed in any commit on this branch.
 
 ### ~~6. Security disclosure path~~ — shipped
 - `SECURITY.md` at repo root. GitHub Security Advisory is the only
