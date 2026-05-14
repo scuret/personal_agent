@@ -744,7 +744,7 @@ async def _run_daemon(
                     if is_group
                     else "1:1"
                 )
-                print(f"[in @ {_now_iso()}] ({origin}) {msg['text'][:80]}")
+                print(f"[in @ {_now_iso()}] ({origin}) {msg['text'][:20]}")
                 try:
                     reply = await process_turn(
                         client, store, conversation_id, msg["text"]
@@ -762,7 +762,7 @@ async def _run_daemon(
                 else:
                     ok, err = sender.send(reply)
                 if ok:
-                    print(f"[out → {origin}] {reply[:80]}")
+                    print(f"[out → {origin}] {reply[:20]}")
                 else:
                     print(f"[send failed] {err}", file=sys.stderr)
 

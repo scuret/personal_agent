@@ -302,7 +302,7 @@ async def _run_daemon() -> None:
         )
 
         final_text = _format_message_for_agent(text, attachments)
-        print(f"[in @ {_now_iso()}] u={user_id}: {final_text[:80]}")
+        print(f"[in @ {_now_iso()}] u={user_id}: {final_text[:20]}")
         try:
             reply = await process_turn(sdk_client, store, conversation_id, final_text)
         except Exception as e:  # noqa: BLE001
@@ -319,7 +319,7 @@ async def _run_daemon() -> None:
         try:
             for chunk in _split_for_discord(reply):
                 await message.channel.send(chunk)
-            print(f"[out] {reply[:80]}")
+            print(f"[out] {reply[:20]}")
         except Exception as e:  # noqa: BLE001
             print(f"[discord send failed] {e}", file=sys.stderr)
 

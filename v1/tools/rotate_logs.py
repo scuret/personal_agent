@@ -18,6 +18,7 @@ Manual run:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 from datetime import datetime, timedelta
@@ -29,6 +30,10 @@ LOG_NAMES: list[str] = [
     "relay.err.log",
     "scheduler.log",
     "scheduler.err.log",
+    "web.log",
+    "web.err.log",
+    "log-rotation.log",
+    "log-rotation.err.log",
 ]
 KEEP_DAYS = 7
 
@@ -48,10 +53,23 @@ def _rotate_one(name: str, today: str, dry_run: bool) -> str:
         return f"  would rotate:   {name} → {dst.name} ({src.stat().st_size} bytes)"
 
     shutil.copy2(src, dst)
+    # Rotated copies inherit `shutil.copy2`'s permission preservation;
+    # if the source is world-readable we want the dated copy to be
+    # owner-only. Live log perms are tightened separately when the
+    # daemons open them (ROADMAP H1 — the in-place src.open('w') below
+    # also gets the umask treatment).
+    try:
+        os.chmod(dst, 0o600)
+    except OSError:
+        pass
     # In-place truncate. launchd's append-mode FD continues writing
     # to the same inode; the file's apparent size resets to 0.
     with src.open("w") as f:
         f.truncate()
+    try:
+        os.chmod(src, 0o600)
+    except OSError:
+        pass
     return f"  rotated:        {name} → {dst.name}"
 
 

@@ -121,13 +121,24 @@ unless you fully understand the implications.
 ### What's planned to harden this
 
 See the [Security enhancements](./ROADMAP.md#security-enhancements)
-section in ROADMAP.md. Active work: file-permission hardening on
-tokens + DB + logs (H1), database encryption (H2), hard-binding the
-web UI to `127.0.0.1` regardless of `WEB_HOST` env var (H3), Eight
-Sleep credentials moving to macOS Keychain (H5), PII masking in the
-web UI's `.env` editor (M1), daemon-log truncation + retention (M2),
-group-chat third-party retention policy (M3), email-triage opt-out
-(M4), and `data/uploads/` lifecycle (M5).
+section in ROADMAP.md.
+
+**Shipped in batch 1 (2026-05-14):**
+- **H1** — tokens / DB / logs now write at `0o600`, with
+  `tools/repair_permissions.py` available to one-shot fix anything
+  on disk from earlier runs (`python -m tools.repair_permissions`).
+- **H3** — the web UI ignores `WEB_HOST` overrides unless you also
+  set `WEB_ALLOW_LAN=1`. A typo can't accidentally expose it.
+- **M1** — the `/config/env` editor now masks PII (phone, address,
+  account IDs) the same way it masks credentials, with a per-row
+  reveal button.
+- **M2** — daemon log previews trimmed from 80 → 20 chars.
+  `tools/rotate_logs.py` already prunes anything older than 7 days.
+
+**Still active:** database encryption (H2), git-history scrub for
+`triggers.yaml` (H4), Eight Sleep password → macOS Keychain (H5),
+group-chat third-party retention (M3), email-triage opt-out (M4),
+`data/uploads/` lifecycle (M5).
 
 The deeper "key rotation + handling discipline" guidance lives in the
 [Privacy + secrets](#privacy--secrets) section further down.

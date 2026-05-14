@@ -168,22 +168,34 @@ package understands the risk profile before the deep fixes land.
 
 ### Active (planned for upcoming sessions)
 
-#### H1. File-permission hardening on tokens, DB, and logs
-- **Risk:** `data/*.json`, `data/*.pickle`, `data/memory.sqlite`,
-  `.env`, `config/credentials.json`, and `data/*.log` are currently
-  world-readable (`-rw-r--r--`). Any other local user (shared Mac,
-  guest account, malicious app under another OS user) can read live
-  OAuth refresh tokens, the SQLite audit log, and message-preview
-  daemon logs.
-- **Cause:** `chmod 0o600` is only called in `tools/install.py` and
-  `web/routes/config.py:244`. The auth scripts that originally write
-  the cached tokens (`mcp_servers/dropbox_auth.py`, `spotify_auth.py`,
-  `google_auth.py`, etc.) skip the chmod, so fresh installs and re-
-  auths leave files world-readable.
-- **Fix:** Add `os.chmod(path, 0o600)` after every token / DB / log
-  write in `mcp_servers/*_auth.py`, `memory/store.py` (SQLite create),
-  and `tools/rotate_logs.py`. Ship `tools/repair_permissions.py` so
-  existing users can re-chmod in one pass.
+Batch 1 (shipped 2026-05-14): H1, H3, M1, M2 plus the user-facing
+warning scaffolding. Remaining work:
+
+- **H2** — encrypt the audit-log database (SQLCipher preferred,
+  30-day `api_events` retention purge as fallback).
+- **H4** — `git filter-repo` to scrub `config/triggers.yaml` from
+  history (also blocks public push; overlaps with going-public #1).
+- **H5** — move `EIGHT_PASSWORD` to the macOS Keychain.
+- **M3** — group-chat third-party retention policy.
+- **M4** — email-triage data flow disclosure + local-only opt-out.
+- **M5** — `data/uploads/` lifecycle.
+
+#### ~~H1. File-permission hardening on tokens, DB, and logs~~ — shipped
+- Every token cache writer (`mcp_servers/dropbox_auth.py`,
+  `spotify_auth.py`, `canva_auth.py`, `linkedin_auth.py`,
+  `eightsleep_auth.py`, `google_auth.py`) now chmods its output to
+  `0o600` immediately after writing.
+- `memory/store.py` chmods `data/memory.sqlite` + its `-wal` / `-shm`
+  companion files on every `MemoryStore.__init__`. Idempotent, so an
+  upgrade-in-place automatically locks down an existing world-readable
+  DB.
+- `tools/rotate_logs.py` chmods both the rotated dated copy and the
+  truncated live log to `0o600` on every rotation pass. Log-name list
+  now covers all daemons (relay / scheduler / web / log-rotation).
+- New `tools/repair_permissions.py` — one-shot fix for users with
+  existing 0o644 files. `--dry-run` previews; default applies. Scans
+  `.env`, `config/credentials.json`, `config/triggers.yaml`, plus
+  every SQLite / pickle / token / log file under `data/`.
 
 #### H2. Encrypt the audit-log database (preferred) or 30-day fallback
 - **Risk:** `data/memory.sqlite` is a plaintext SQLite file holding
@@ -199,17 +211,16 @@ package understands the risk profile before the deep fixes land.
 - **Files:** `memory/store.py`, new `memory/encryption.py`, new
   `tools/migrate_db_encryption.py`.
 
-#### H3. Hard-bind the web UI to 127.0.0.1
-- **Risk:** `web/app.py` reads `WEB_HOST` from env and defaults to
-  `127.0.0.1`. If the user ever sets `WEB_HOST=0.0.0.0` (intentionally
-  or via a copy-paste accident), every endpoint becomes reachable
-  from the local network with no auth.
-- **Fix (chosen — fix A only):** Reject any `WEB_HOST` override
-  unless an explicit `WEB_ALLOW_LAN=1` opt-in flag is set. The
-  binding alone closes the LAN-attack vector for a local-only single-
-  user tool. CSRF tokens, Origin header checks, and `/uploads` auth
-  are out of scope as acceptable risk for v1.
-- **Files:** `web/app.py:113`.
+#### ~~H3. Hard-bind the web UI to 127.0.0.1~~ — shipped
+- `web/app.py` now ignores any `WEB_HOST` env override that isn't
+  `127.0.0.1` unless the user has also set `WEB_ALLOW_LAN=1`. With
+  the override blocked, a stderr line documents the override-attempt
+  and what the user would need to set to allow it. With the override
+  honored, a louder stderr warning explains that the UI has no auth /
+  CSRF and recommends a firewall or reverse proxy in front of it.
+- `.env.example` and the install disclosure both call out the
+  two-step opt-in. CSRF tokens / Origin header checks / `/uploads`
+  auth remain out of scope as acceptable risk for v1.
 
 #### H4. Scrub `triggers.yaml` from git history
 - **Risk:** `config/triggers.yaml` was tracked in commits `bd1168a`,
@@ -233,28 +244,33 @@ package understands the risk profile before the deep fixes land.
 - **Files:** `mcp_servers/eightsleep_auth.py`, `tools/install.py`,
   `.env.example`.
 
-#### M1. Extend `/config/env` masking to PII fields
-- **Risk:** The current `_SECRET_HINTS = ("KEY", "SECRET", "TOKEN",
-  "PASSWORD")` heuristic masks credential-shaped values but renders
-  `TARGET_PHONE_NUMBER`, `SELF_HANDLES`, `USER_HOME_ADDRESS`,
-  `*_ALLOWED_USER_IDS`, `*_BRIEF_CHAT_ID` in plaintext. A shoulder-
-  surfer, screenshot, or screen-share leaks the user's home address
-  and phone number.
-- **Fix:** Add an explicit PII denylist alongside the secret-keyword
-  heuristic. Mask by default with a "reveal" button per row.
-- **Files:** `web/routes/config.py:85-88`,
-  `web/templates/config/env.html`.
+#### ~~M1. Extend `/config/env` masking to PII fields~~ — shipped
+- `web/routes/config.py` now classifies a var as sensitive via
+  `_is_sensitive()` — credential-shaped substrings (`KEY` / `SECRET` /
+  `TOKEN` / `PASSWORD`) OR an explicit PII list (`EIGHT_EMAIL`,
+  `TARGET_PHONE_NUMBER`, `SELF_HANDLES`, `USER_HOME_ADDRESS`) OR
+  suffix patterns (`*_ALLOWED_USER_IDS`, `*_ALLOWED_CHAT_IDS`,
+  `*_BRIEF_*`).
+- Sensitive values render with `type=password` by default + a per-row
+  👁 reveal button. The "secret" badge has been renamed to
+  "sensitive" to cover the PII case. The global "reveal secrets"
+  toggle in the header still works as a bulk override.
+- PII values mask completely (`(masked)`) rather than showing a
+  prefix, since a partial street name / phone area code is still a
+  meaningful leak.
 
-#### M2. Truncate message previews in daemon logs + add retention
-- **Risk:** `relay/imessage_relay.py:747` and Telegram/Discord/Slack
-  equivalents log 80-char message previews to `data/*.log`. Logs are
-  world-readable (H1) and rotated daily but never deleted — history
-  accumulates forever.
-- **Fix:** Cut the log preview length to 20 chars. Add a retention
-  setting (default 7 days) in `tools/rotate_logs.py` that deletes
-  rotated logs older than the threshold.
-- **Files:** `relay/*.py`, `scheduler/triggers.py`,
-  `tools/rotate_logs.py`.
+#### ~~M2. Truncate message previews in daemon logs + add retention~~ — shipped
+- All `[in @ ...]` / `[out → ...]` / `[sent] ...` log statements in
+  `relay/imessage_relay.py`, `relay/telegram_relay.py`,
+  `relay/discord_relay.py`, `relay/slack_relay.py`, and
+  `scheduler/triggers.py` now truncate the message body to 20 chars
+  (down from 80). Combined with H1's `0o600` perms, this strictly
+  limits how much message content leaks if logs are read by another
+  local user.
+- `tools/rotate_logs.py` retention was already enforced via
+  `KEEP_DAYS = 7` (rotated logs older than 7 days get pruned on every
+  rotation pass). Reaffirmed here and the log-name list now covers
+  the web + log-rotation daemons in addition to relay + scheduler.
 
 #### M3. Group-chat third-party retention policy
 - **Risk:** When `IMESSAGE_GROUP_CHATS` is set, the relay archives

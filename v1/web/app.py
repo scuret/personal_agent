@@ -15,6 +15,7 @@ Production (LaunchAgent):
 from __future__ import annotations
 
 import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -105,6 +106,40 @@ def make_app() -> FastAPI:
 app = make_app()
 
 
+def _resolve_host() -> str:
+    """Pick the bind address.
+
+    The web UI has no authentication and no CSRF protection (see the
+    Privacy & security profile in README.md). We hard-bind to
+    127.0.0.1 to keep state-changing endpoints unreachable from the
+    LAN. The `WEB_HOST` env var is honored only when the user has
+    also opted into `WEB_ALLOW_LAN=1` — a deliberate two-step so a
+    stray `WEB_HOST=0.0.0.0` typo doesn't silently expose the UI.
+
+    See ROADMAP "Security enhancements" H3 for the full rationale.
+    """
+    requested = os.environ.get("WEB_HOST", "").strip()
+    if not requested or requested == DEFAULT_HOST:
+        return DEFAULT_HOST
+    allow_lan = os.environ.get("WEB_ALLOW_LAN", "").strip().lower() in {
+        "1", "true", "yes", "y",
+    }
+    if not allow_lan:
+        print(
+            f"[web] ignoring WEB_HOST={requested!r}: set WEB_ALLOW_LAN=1 "
+            f"to bind to a non-loopback address. Sticking to {DEFAULT_HOST}.",
+            file=sys.stderr,
+        )
+        return DEFAULT_HOST
+    print(
+        f"[web] ⚠ WEB_ALLOW_LAN=1 + WEB_HOST={requested!r} — UI is now "
+        "reachable beyond loopback. There is NO authentication and NO "
+        "CSRF protection. Put it behind a firewall or reverse proxy.",
+        file=sys.stderr,
+    )
+    return requested
+
+
 def main() -> None:
     """CLI: `python -m web.app` — handy for `--run-now`-style local
     starts without typing the uvicorn command."""
@@ -112,7 +147,7 @@ def main() -> None:
 
     uvicorn.run(
         "web.app:app",
-        host=os.environ.get("WEB_HOST", DEFAULT_HOST),
+        host=_resolve_host(),
         port=int(os.environ.get("WEB_PORT", DEFAULT_PORT)),
         reload=False,
     )

@@ -120,6 +120,8 @@ def _save_cache(data: dict[str, Any]) -> None:
     path = _token_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2))
+    # Token cache holds live refresh tokens — owner-only. ROADMAP H1.
+    os.chmod(path, 0o600)
 
 
 def _expires_at_from(payload: dict[str, Any]) -> str:

@@ -74,6 +74,8 @@ def _save_cache(data: dict[str, Any]) -> None:
     p = _token_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(data, indent=2))
+    # Session token cache — owner-only. ROADMAP H1.
+    os.chmod(p, 0o600)
 
 
 def _is_expired(expires_at: str | None) -> bool:

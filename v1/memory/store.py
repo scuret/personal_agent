@@ -24,6 +24,7 @@ not implemented — add if disk usage becomes an issue.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import sys
 import threading
@@ -120,6 +121,17 @@ class MemoryStore:
         # we create per-thread connections via threading.local instead.
         self._local = threading.local()
         self._init_schema()
+        # Audit log + conversation archive + facts all live here. Owner-
+        # only file perms. We chmod every time the wrapper is constructed
+        # (cheap and idempotent) so an existing world-readable file
+        # gets locked down on first run after upgrade. ROADMAP H1.
+        for suffix in ("", "-wal", "-shm"):
+            companion = self.db_path.with_name(self.db_path.name + suffix)
+            if companion.exists():
+                try:
+                    os.chmod(companion, 0o600)
+                except OSError:  # noqa: PERF203 — non-fatal
+                    pass
 
     def _conn(self) -> sqlite3.Connection:
         c: sqlite3.Connection | None = getattr(self._local, "conn", None)

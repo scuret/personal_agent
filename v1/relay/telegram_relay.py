@@ -434,7 +434,7 @@ async def _run_daemon() -> None:
                 )
                 print(
                     f"[in @ {_now_iso()}] u={user_id} ({origin}): "
-                    f"{final_text[:80]}"
+                    f"{final_text[:20]}"
                 )
                 try:
                     reply = await process_turn(
@@ -451,7 +451,7 @@ async def _run_daemon() -> None:
                 sender = TelegramSender(chat_id)
                 ok, err = sender.send(reply)
                 if ok:
-                    print(f"[out → {origin}] {reply[:80]}")
+                    print(f"[out → {origin}] {reply[:20]}")
                 else:
                     print(f"[telegram send failed] {err}", file=sys.stderr)
 

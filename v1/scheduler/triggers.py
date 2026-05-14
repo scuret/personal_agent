@@ -1732,7 +1732,7 @@ async def _fire_trigger(trigger_name: str) -> None:
 
     ok, err = sender.send(reply)
     if ok:
-        print(f"[sent] {trigger_name}: {reply[:80]}")
+        print(f"[sent] {trigger_name}: {reply[:20]}")
     else:
         print(f"[send failed] {err}", file=sys.stderr)
 

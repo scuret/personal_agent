@@ -108,6 +108,9 @@ def _save_cache(data: dict[str, Any]) -> None:
     path = _token_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2))
+    # Token cache files hold live refresh tokens — restrict to the
+    # owning user. See ROADMAP "Security enhancements" H1.
+    os.chmod(path, 0o600)
 
 
 def _exchange_code_for_tokens(code: str, redirect_uri: str) -> dict[str, Any]:

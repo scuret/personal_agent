@@ -81,11 +81,42 @@ async def post_personality(content: str = Form(...)) -> RedirectResponse:
 # ─── .env ───────────────────────────────────────────────────────────────────
 
 
-# Patterns that look like secret material; mask their values in the
-# rendered editor to avoid casual shoulder-surfing.
+# Substrings in a var name that mark it as credential-shaped. Values
+# matching these are rendered masked so a shoulder-surfer / screenshot /
+# screen-share doesn't leak them.
 _SECRET_HINTS = (
     "KEY", "SECRET", "TOKEN", "PASSWORD",
 )
+
+# PII denylist — variables that aren't strictly secrets but ARE
+# personal data the user wouldn't want surfaced casually (home
+# address, phone number, account IDs on third-party platforms). Same
+# masking treatment as secrets. Matched both exactly and via the
+# trailing-substring patterns (e.g. ``*_ALLOWED_USER_IDS``).
+# ROADMAP "Security enhancements" M1.
+_PII_EXACT = {
+    "EIGHT_EMAIL",
+    "TARGET_PHONE_NUMBER",
+    "SELF_HANDLES",
+    "USER_HOME_ADDRESS",
+}
+_PII_SUFFIXES = (
+    "_ALLOWED_USER_IDS",
+    "_ALLOWED_CHAT_IDS",
+    "_BRIEF_CHAT_ID",
+    "_BRIEF_RECIPIENT_ID",
+    "_BRIEF_USER_ID",
+)
+
+
+def _is_sensitive(key: str) -> bool:
+    """Return True if `key` is either credential-shaped or known PII."""
+    upper = key.upper()
+    if any(h in upper for h in _SECRET_HINTS):
+        return True
+    if upper in _PII_EXACT:
+        return True
+    return any(upper.endswith(s) for s in _PII_SUFFIXES)
 
 
 def _keys_from(path: Path) -> set[str]:
@@ -127,13 +158,12 @@ def _missing_from_example_block() -> list[dict]:
             if key in existing:
                 last_comment_block = []
                 continue
-            is_secret = any(h in key for h in _SECRET_HINTS)
             out.append({
                 "kind": "var",
                 "key": key,
                 "value": "",
                 "masked_value": "",
-                "is_secret": is_secret,
+                "is_secret": _is_sensitive(key),
                 "is_missing": True,
                 "hint": "\n".join(last_comment_block),
             })
@@ -158,14 +188,25 @@ def _read_env_lines() -> list[dict]:
             key, _, value = line.partition("=")
             key = key.strip()
             value = value.strip()
-            is_secret = any(h in key for h in _SECRET_HINTS) and value
-            masked = (value[:4] + "…(masked)") if (is_secret and len(value) > 6) else value
+            is_sensitive = _is_sensitive(key) and value
+            # Mask all sensitive fields (both credentials AND PII).
+            # Credentials show a 4-char prefix; PII shows nothing (the
+            # prefix would still leak a phone area code or street name).
+            if is_sensitive:
+                upper = key.upper()
+                is_credential = any(h in upper for h in _SECRET_HINTS)
+                if is_credential and len(value) > 6:
+                    masked = value[:4] + "…(masked)"
+                else:
+                    masked = "(masked)"
+            else:
+                masked = value
             out.append({
                 "kind": "var",
                 "key": key,
                 "value": value,
-                "masked_value": masked if is_secret else value,
-                "is_secret": is_secret,
+                "masked_value": masked,
+                "is_secret": is_sensitive,
                 "is_missing": False,
             })
         else:

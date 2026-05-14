@@ -93,6 +93,9 @@ def _save_credentials(creds: Credentials) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as f:
         pickle.dump(creds, f)
+    # Pickle holds live Google OAuth refresh + access tokens. Owner-
+    # only file perms. ROADMAP "Security enhancements" H1.
+    os.chmod(path, 0o600)
 
 
 def _scopes_satisfied(creds: Credentials, required: list[str]) -> bool:
