@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}privacy & security · personal_agent{% endblock %}
+{% block content %}
+
+<div class="max-w-3xl">
+    <h1 class="text-3xl font-semibold mb-2">Privacy &amp; security profile</h1>
+    <p class="text-zinc-400 mb-6">
+        Read this before you configure anything. This page mirrors the
+        same section in <code class="mono">README.md</code>; either one is
+        the source of truth.
+    </p>
+
+    <div class="rounded-lg border border-amber-700 bg-amber-950/30 p-4 mb-6 text-sm text-amber-100">
+        ⚠ This is a <strong>single-user, local-first</strong> tool. It stores a lot of personal data
+        on your machine and sends a lot of personal data to Anthropic on your behalf. Understand the
+        profile before running it.
+    </div>
+
+    <section class="mb-8">
+        <h2 class="text-xl font-semibold mb-3">What lives on your local machine</h2>
+        <div class="overflow-x-auto">
+            <table class="text-sm w-full border border-zinc-800 rounded-lg">
+                <thead class="bg-zinc-900/50">
+                    <tr class="text-left">
+                        <th class="px-3 py-2 mono text-xs">Path</th>
+                        <th class="px-3 py-2">What&rsquo;s in it</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-zinc-800">
+                    <tr><td class="px-3 py-2 mono text-xs">data/memory.sqlite</td><td class="px-3 py-2">Every conversation with the agent, every fact extracted about you, and a verbatim audit log of every Claude API payload (see the <code class="mono">api_events</code> table). Plaintext SQLite today.</td></tr>
+                    <tr><td class="px-3 py-2 mono text-xs">.env</td><td class="px-3 py-2">API keys for every sub-agent you&rsquo;ve enabled. For Eight Sleep: a real account password. Plaintext.</td></tr>
+                    <tr><td class="px-3 py-2 mono text-xs">config/credentials.json</td><td class="px-3 py-2">Google OAuth client secret. Plaintext.</td></tr>
+                    <tr><td class="px-3 py-2 mono text-xs">data/*_token.json, data/google_token.pickle</td><td class="px-3 py-2">Live OAuth refresh tokens. Stolen tokens give a third party indefinite access until you revoke them at the provider.</td></tr>
+                    <tr><td class="px-3 py-2 mono text-xs">data/*.log</td><td class="px-3 py-2">Daemon logs with first-80-char previews of incoming messages and email-triage decisions.</td></tr>
+                    <tr><td class="px-3 py-2 mono text-xs">data/uploads/</td><td class="px-3 py-2">Every image you&rsquo;ve attached in the web chat.</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <p class="text-sm text-zinc-400 mt-3">
+            These files are gitignored by default. Keep the entire
+            <code class="mono">v1/</code> folder <strong>out of cloud sync</strong> (iCloud Drive,
+            Dropbox, Google Drive), <strong>off shared NFS mounts</strong>, and
+            <strong>excluded from Time Machine backups</strong> unless you fully understand the
+            implications.
+        </p>
+    </section>
+
+    <section class="mb-8">
+        <h2 class="text-xl font-semibold mb-3">What gets sent over the network</h2>
+        <ul class="text-sm text-zinc-300 space-y-2 list-disc list-inside">
+            <li><strong>Anthropic</strong> &mdash; every message you send the agent, every assistant
+                reply, every tool call, AND every email body the scheduler triages (capped at 4000
+                chars per email). Anthropic&rsquo;s commercial terms apply: no training on your
+                data, 30-day retention by default. Audit locally via the
+                <code class="mono">api_events</code> table in
+                <code class="mono">data/memory.sqlite</code>.</li>
+            <li><strong>Each sub-agent&rsquo;s provider</strong> &mdash; Gmail/Calendar/Drive to
+                Google; Telegram/Discord/Slack to their platforms; Spotify, Dropbox, Eight Sleep,
+                Brave Search, Open-Meteo, YouTube, Notion, GitHub, Todoist, Google Maps /
+                OpenStreetMap each to their own API.</li>
+            <li><strong>No analytics, no telemetry, no crash reporting.</strong> Nothing else
+                leaves the machine.</li>
+        </ul>
+    </section>
+
+    <section class="mb-8">
+        <h2 class="text-xl font-semibold mb-3 text-emerald-300">Threat models this protects against</h2>
+        <ul class="text-sm text-zinc-300 space-y-2 list-disc list-inside">
+            <li><strong>Honest mistakes.</strong> A PreToolUse hook blocks any attempt to
+                auto-send email; the agent only writes Drafts (Gmail and Apple Mail).</li>
+            <li><strong>Casual local-network attackers.</strong> The web UI binds to
+                <code class="mono">127.0.0.1</code> only &mdash; never exposed on the LAN.</li>
+            <li><strong>Public-repo accidental leaks.</strong> A strong <code class="mono">.gitignore</code>
+                excludes <code class="mono">.env*</code>, <code class="mono">config/credentials.json</code>,
+                <code class="mono">config/triggers.yaml</code>, <code class="mono">data/*.sqlite*</code>,
+                <code class="mono">data/*.log</code>, and every token cache.</li>
+        </ul>
+    </section>
+
+    <section class="mb-8">
+        <h2 class="text-xl font-semibold mb-3 text-rose-300">Threat models this does NOT protect against</h2>
+        <ul class="text-sm text-zinc-300 space-y-2 list-disc list-inside">
+            <li><strong>A stolen or shared laptop where someone has your OS account.</strong>
+                All files under <code class="mono">data/</code> and <code class="mono">.env</code>
+                are readable by the OS user that runs the daemons. Today they sit at
+                <code class="mono">0o644</code> (world-readable on your machine &mdash; fix on
+                roadmap). Use FileVault and don&rsquo;t share user accounts.</li>
+            <li><strong>A malicious local app running under your OS user.</strong> It has the
+                same filesystem access you do.</li>
+            <li><strong>A malicious website visited in another browser tab while the web UI is
+                running.</strong> State-changing POSTs to <code class="mono">/chat</code>,
+                <code class="mono">/config/env</code>, and <code class="mono">/settings/connect/...</code>
+                don&rsquo;t have CSRF protection in v1. The hard
+                <code class="mono">127.0.0.1</code> binding is the only line of defense; treat the
+                web UI as you would <code class="mono">localhost:5432</code> for a database.</li>
+            <li><strong>Privacy of third parties in group chats you opt in.</strong> When you set
+                <code class="mono">IMESSAGE_GROUP_CHATS</code>, the agent reads and archives messages
+                from everyone in those threads &mdash; not just you. Tell them, or don&rsquo;t opt
+                that group in.</li>
+            <li><strong>Backups outside the project folder.</strong> Time Machine, iCloud Drive,
+                and similar will happily back up <code class="mono">v1/data/</code> to a separate
+                trust domain unless you exclude it.</li>
+        </ul>
+    </section>
+
+    <section class="mb-8">
+        <h2 class="text-xl font-semibold mb-3">What&rsquo;s planned to harden this</h2>
+        <p class="text-sm text-zinc-300">
+            See the <strong>Security enhancements</strong> section in
+            <code class="mono">ROADMAP.md</code>. Active work: file-permission hardening on tokens
+            + DB + logs (H1), database encryption (H2), hard-binding the web UI to
+            <code class="mono">127.0.0.1</code> regardless of <code class="mono">WEB_HOST</code>
+            (H3), Eight Sleep credentials moving to macOS Keychain (H5), PII masking in the web
+            UI&rsquo;s <code class="mono">.env</code> editor (M1), daemon-log truncation +
+            retention (M2), group-chat third-party retention policy (M3), email-triage opt-out
+            (M4), and <code class="mono">data/uploads/</code> lifecycle (M5).
+        </p>
+    </section>
+
+    <p class="text-xs text-zinc-500">
+        Last updated when the security audit landed (commit history is the source of truth).
+    </p>
+</div>
+{% endblock %}

@@ -65,6 +65,7 @@ def make_app() -> FastAPI:
     # Import + register routes here (not at module top) so the test
     # harness can construct the app without firing every dependency.
     from web.routes import (
+        about,
         chat,
         config,
         conversations,
@@ -89,6 +90,7 @@ def make_app() -> FastAPI:
     app.include_router(config.router)
     app.include_router(settings.router)
     app.include_router(install.router)
+    app.include_router(about.router)
 
     @app.exception_handler(404)
     async def _not_found(request: Request, _exc):

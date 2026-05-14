@@ -4,6 +4,35 @@
 {% block content %}
 <div class="space-y-6">
 
+    <!-- Privacy / security banner. Dismissible per-browser; the localStorage
+         key is per-version so we can re-surface the banner when the audit
+         scope changes. -->
+    <div id="privacy-banner"
+         class="hidden rounded-lg border border-amber-700 bg-amber-950/30 p-3 flex items-start gap-3 text-sm">
+        <span class="text-amber-300 mt-0.5">⚠</span>
+        <div class="flex-1 text-amber-100">
+            This UI has no authentication. It binds to
+            <span class="mono">127.0.0.1</span> only, but state-changing endpoints
+            don&rsquo;t have CSRF protection. Treat it like an open local database port.
+            <a href="/about/privacy" class="underline hover:text-amber-50">Read the full privacy &amp; security disclosure</a>.
+        </div>
+        <button onclick="dismissPrivacyBanner()"
+                class="text-xs text-amber-200/70 hover:text-amber-50 mt-0.5">dismiss</button>
+    </div>
+    <script>
+    (function() {
+        const KEY = 'pa_privacy_banner_dismissed_v1';
+        const el = document.getElementById('privacy-banner');
+        if (!localStorage.getItem(KEY)) {
+            el.classList.remove('hidden');
+        }
+        window.dismissPrivacyBanner = function() {
+            localStorage.setItem(KEY, String(Date.now()));
+            el.classList.add('hidden');
+        };
+    })();
+    </script>
+
     <!-- Daemon status grid -->
     <section>
         <div class="flex items-baseline justify-between mb-3">

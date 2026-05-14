@@ -44,6 +44,94 @@ The web UI's Observability page shows the same data.
 
 Provider-side billing dashboards (Anthropic console, Google Cloud, etc.) are the source of truth — the local cost report is a convenience.
 
+## Privacy & security profile
+
+> ⚠ Read this before you configure anything.
+
+This is a **single-user, local-first** tool. It stores a lot of
+personal data on your machine and sends a lot of personal data to
+Anthropic on your behalf. Understand the profile before running it.
+
+### What lives on your local machine
+
+| Path | What's in it |
+|---|---|
+| `data/memory.sqlite` | every conversation with the agent, every fact extracted about you, and a verbatim audit log of every Claude API payload (see the `api_events` table). Plaintext SQLite today. |
+| `.env` | API keys for every sub-agent you've enabled. For Eight Sleep specifically: a real account password. Plaintext. |
+| `config/credentials.json` | Google OAuth client secret. Plaintext. |
+| `data/*_token.json`, `data/google_token.pickle` | live OAuth refresh tokens for Gmail, Calendar, Drive, Spotify, Dropbox, etc. A stolen token gives a third party **indefinite** access to that service until you revoke it at the provider. |
+| `data/*.log` | daemon logs with first-80-char previews of incoming messages and email-triage decisions. |
+| `data/uploads/` | every image you've attached in the web chat. |
+
+These files are gitignored by default. Keep the entire `v1/` folder
+**out of cloud sync** (iCloud Drive, Dropbox, Google Drive), **off
+shared NFS mounts**, and **excluded from Time Machine backups**
+unless you fully understand the implications.
+
+### What gets sent over the network
+
+- **Anthropic** — every message you send the agent, every assistant
+  reply, every tool call, AND every email body the scheduler triages
+  (capped at 4000 chars per email). Anthropic's commercial terms apply
+  here: no training on your data, 30-day retention by default. You can
+  audit what was sent locally by reading the `api_events` table in
+  `data/memory.sqlite`.
+- **Each sub-agent's provider** — Gmail / Calendar / Drive talk to
+  Google. Telegram / Discord / Slack talk to their respective
+  platforms. Spotify, Dropbox, Eight Sleep, Brave Search, Open-Meteo,
+  YouTube, Notion, GitHub, Todoist, Google Maps / OpenStreetMap each
+  talk to their own API. Sub-agents you haven't enabled never talk to
+  anyone.
+- **No analytics, no telemetry, no crash reporting.** Nothing else
+  leaves the machine.
+
+### Threat models this protects against
+
+- **Honest mistakes.** A PreToolUse hook blocks any attempt to auto-
+  send email; the agent only writes Drafts (Gmail and Apple Mail).
+- **Casual local-network attackers.** The web UI binds to `127.0.0.1`
+  only — never exposed on the LAN.
+- **Public-repo accidental leaks.** A strong `.gitignore` excludes
+  `.env*`, `config/credentials.json`, `config/triggers.yaml`,
+  `data/*.sqlite*`, `data/*.log`, and every `data/*_token.json` /
+  `data/*.json` / `data/*.pickle`.
+
+### Threat models this does NOT protect against
+
+- **A stolen or shared laptop where someone has your OS account.**
+  All files under `data/` and `.env` are readable by the OS user that
+  runs the daemons. Today they sit at `0o644` (world-readable on your
+  machine — fix is on the roadmap). Use FileVault and don't share
+  user accounts.
+- **A malicious local app running under your OS user.** It has the
+  same filesystem access you do, and can read `.env` + token caches.
+- **A malicious website visited in another browser tab while the web
+  UI is running.** State-changing POSTs to `/chat`, `/config/env`,
+  and `/settings/connect/...` don't have CSRF protection in v1. The
+  hard `127.0.0.1` binding is the only line of defense; treat the
+  web UI as you would `localhost:5432` for a database.
+- **Privacy of third parties in group chats you opt in.** When you
+  set `IMESSAGE_GROUP_CHATS`, the agent reads and archives messages
+  from everyone in those threads — not just you. Tell them, or don't
+  opt that group in.
+- **Backups outside the project folder.** Time Machine, iCloud Drive,
+  and similar will happily back up `v1/data/` to a separate trust
+  domain unless you exclude it.
+
+### What's planned to harden this
+
+See the [Security enhancements](./ROADMAP.md#security-enhancements)
+section in ROADMAP.md. Active work: file-permission hardening on
+tokens + DB + logs (H1), database encryption (H2), hard-binding the
+web UI to `127.0.0.1` regardless of `WEB_HOST` env var (H3), Eight
+Sleep credentials moving to macOS Keychain (H5), PII masking in the
+web UI's `.env` editor (M1), daemon-log truncation + retention (M2),
+group-chat third-party retention policy (M3), email-triage opt-out
+(M4), and `data/uploads/` lifecycle (M5).
+
+The deeper "key rotation + handling discipline" guidance lives in the
+[Privacy + secrets](#privacy--secrets) section further down.
+
 ## Choosing a transport
 
 Set `RELAY_TRANSPORT` in `.env` to one of:

@@ -154,6 +154,183 @@ These aren't user-facing capabilities but improve daily use.
 - ~~"Query archive" tool~~ — shipped as the `archive` sub-agent.
 - ~~Recurring reminders~~ — shipped (`remind_recurring` tool with daily / weekdays / weekly / monthly patterns).
 
+## Security enhancements
+
+Output of a focused personal-data-exposure audit (2026-05-14). Three
+parallel reviews covered (a) secrets / tokens / file permissions, (b)
+data at rest (SQLite, logs, uploads), and (c) data in motion + the
+web UI surface. 15 findings recorded below.
+
+The user-facing **warnings** scaffolding (README privacy section,
+`.env.example` banner, installer disclosure, web UI banner + /about/
+privacy page) shipped alongside this section so anyone running the
+package understands the risk profile before the deep fixes land.
+
+### Active (planned for upcoming sessions)
+
+#### H1. File-permission hardening on tokens, DB, and logs
+- **Risk:** `data/*.json`, `data/*.pickle`, `data/memory.sqlite`,
+  `.env`, `config/credentials.json`, and `data/*.log` are currently
+  world-readable (`-rw-r--r--`). Any other local user (shared Mac,
+  guest account, malicious app under another OS user) can read live
+  OAuth refresh tokens, the SQLite audit log, and message-preview
+  daemon logs.
+- **Cause:** `chmod 0o600` is only called in `tools/install.py` and
+  `web/routes/config.py:244`. The auth scripts that originally write
+  the cached tokens (`mcp_servers/dropbox_auth.py`, `spotify_auth.py`,
+  `google_auth.py`, etc.) skip the chmod, so fresh installs and re-
+  auths leave files world-readable.
+- **Fix:** Add `os.chmod(path, 0o600)` after every token / DB / log
+  write in `mcp_servers/*_auth.py`, `memory/store.py` (SQLite create),
+  and `tools/rotate_logs.py`. Ship `tools/repair_permissions.py` so
+  existing users can re-chmod in one pass.
+
+#### H2. Encrypt the audit-log database (preferred) or 30-day fallback
+- **Risk:** `data/memory.sqlite` is a plaintext SQLite file holding
+  every conversation, every fact extracted, and a verbatim copy of
+  every Claude API payload in `api_events` (541 rows today, growing).
+- **Fix (preferred):** Migrate to SQLCipher with a passphrase stored
+  in the macOS Keychain. Existing rows are preserved; encryption is
+  transparent at the DB layer.
+- **Fallback:** If SQLCipher integration is fragile or too disruptive,
+  add 30-day retention purge for `api_events` only. Preserve
+  `messages`, `facts`, and `conversations` indefinitely so the
+  conversation history and memory aren't lost.
+- **Files:** `memory/store.py`, new `memory/encryption.py`, new
+  `tools/migrate_db_encryption.py`.
+
+#### H3. Hard-bind the web UI to 127.0.0.1
+- **Risk:** `web/app.py` reads `WEB_HOST` from env and defaults to
+  `127.0.0.1`. If the user ever sets `WEB_HOST=0.0.0.0` (intentionally
+  or via a copy-paste accident), every endpoint becomes reachable
+  from the local network with no auth.
+- **Fix (chosen — fix A only):** Reject any `WEB_HOST` override
+  unless an explicit `WEB_ALLOW_LAN=1` opt-in flag is set. The
+  binding alone closes the LAN-attack vector for a local-only single-
+  user tool. CSRF tokens, Origin header checks, and `/uploads` auth
+  are out of scope as acceptable risk for v1.
+- **Files:** `web/app.py:113`.
+
+#### H4. Scrub `triggers.yaml` from git history
+- **Risk:** `config/triggers.yaml` was tracked in commits `bd1168a`,
+  `3fc4584`, `4284f35` with 15 real personal email addresses. Removed
+  in `32c0fdd` but persists in history. Once the repo flips public,
+  `git log -p` exposes everything irreversibly.
+- **Fix:** Already on the going-public prep list as item #1.
+  Reaffirmed here as a security blocker before any public push.
+  `pip install git-filter-repo` then
+  `git filter-repo --path v1/config/triggers.yaml --invert-paths`,
+  then force-push.
+
+#### H5. Move `EIGHT_PASSWORD` to macOS Keychain
+- **Risk:** Eight Sleep has no OAuth alternative — auth uses an
+  email + plaintext password POST. The password sits in `.env` and
+  is the master credential for the account.
+- **Fix:** Use the `keyring` Python package
+  (`security add-generic-password` underneath) to store the password
+  in the macOS Keychain. Read at startup; remove `EIGHT_PASSWORD`
+  from `.env.example`'s required block.
+- **Files:** `mcp_servers/eightsleep_auth.py`, `tools/install.py`,
+  `.env.example`.
+
+#### M1. Extend `/config/env` masking to PII fields
+- **Risk:** The current `_SECRET_HINTS = ("KEY", "SECRET", "TOKEN",
+  "PASSWORD")` heuristic masks credential-shaped values but renders
+  `TARGET_PHONE_NUMBER`, `SELF_HANDLES`, `USER_HOME_ADDRESS`,
+  `*_ALLOWED_USER_IDS`, `*_BRIEF_CHAT_ID` in plaintext. A shoulder-
+  surfer, screenshot, or screen-share leaks the user's home address
+  and phone number.
+- **Fix:** Add an explicit PII denylist alongside the secret-keyword
+  heuristic. Mask by default with a "reveal" button per row.
+- **Files:** `web/routes/config.py:85-88`,
+  `web/templates/config/env.html`.
+
+#### M2. Truncate message previews in daemon logs + add retention
+- **Risk:** `relay/imessage_relay.py:747` and Telegram/Discord/Slack
+  equivalents log 80-char message previews to `data/*.log`. Logs are
+  world-readable (H1) and rotated daily but never deleted — history
+  accumulates forever.
+- **Fix:** Cut the log preview length to 20 chars. Add a retention
+  setting (default 7 days) in `tools/rotate_logs.py` that deletes
+  rotated logs older than the threshold.
+- **Files:** `relay/*.py`, `scheduler/triggers.py`,
+  `tools/rotate_logs.py`.
+
+#### M3. Group-chat third-party retention policy
+- **Risk:** When `IMESSAGE_GROUP_CHATS` is set, the relay archives
+  messages from OTHER people in those groups indefinitely. Their
+  content gets embedded for vector search, stored in `messages`, and
+  is indistinguishable from the user's own data in the archive. No
+  opt-in, no purge, no consent model.
+- **Fix:** (a) Tag third-party messages with
+  `metadata.is_third_party=true` at archive time. (b) Add
+  `group_chat_retention_days` (default 30) with a scheduler purge
+  job. (c) Web UI history filters third-party messages by default
+  with a toggle. (d) Document in `personality.md` Group chats
+  section so the agent can disclose it if asked in-group.
+- **Files:** `relay/imessage_relay.py:481-528`, `memory/store.py`,
+  `scheduler/triggers.py`, `web/routes/conversations.py`,
+  `config/personality.md`.
+
+#### M4. Email-triage data flow disclosure + local-only opt-out
+- **Risk:** `scheduler/triggers.py:_triage_email_with_haiku` sends
+  every non-automated unread email body (capped at 4000 chars) to
+  Anthropic on every fire. By design, but the user may not realize
+  every personal email gets a one-way trip to Anthropic.
+- **Fix:** (a) README "Privacy & security profile" already spells
+  out this data flow. (b) Add `EMAIL_TRIAGE_LOCAL_ONLY=true` opt-out
+  that falls back to a small local rules-based filter. (c) Morning
+  brief includes a "triaged N emails to Anthropic in last 24h"
+  line so the activity is visible.
+- **Files:** `scheduler/triggers.py`, `.env.example`,
+  `tools/install.py`.
+
+#### M5. `data/uploads/` lifecycle
+- **Risk:** Uploaded chat images persist forever under
+  `data/uploads/<conv_id>/`. Sensitive images (IDs, financial docs,
+  medical) stay on disk indefinitely; the `/uploads` static mount
+  has no auth (H3 binding limits to 127.0.0.1, but still).
+- **Fix:** Purge `data/uploads/<conv_id>/` when its conversation
+  closes (`store.close_conversation` hook). Cap total uploads
+  directory size with oldest-first purge above the cap. Document
+  storage + retention in `personality.md`'s Image attachments
+  section.
+- **Files:** `web/routes/chat.py`, `memory/store.py`,
+  `config/personality.md`.
+
+### Recorded for future consideration (LOW — no implementation planned)
+
+These are theoretical risks or quality-of-life improvements with
+low practical exposure. Surfaced here so they're not dropped between
+sessions, but not on the implementation plan.
+
+- **L1. Token-rotation hygiene.** `tools/token_health.py` checks
+  validity but never rotates. README warns "rotate quarterly" but
+  it's manual. Future: `tools/rotate_tokens.py` skeleton + cadence
+  reminders in the morning brief.
+- **L2. Relay-destination sanity check.** `TARGET_PHONE_NUMBER` is
+  used verbatim; a typo silently re-routes briefs. Future: format-
+  validate at startup; warn on first send if destination changed.
+- **L3. Maps `USER_HOME_ADDRESS` caching.** Every geocode query
+  sends the home address to Google/OSM. Future: cache coordinates
+  locally and only re-resolve when the address changes.
+- **L4. Vector embedding reversibility.** BGE-base is a public model
+  + raw float32 vectors stored alongside text. Low practical risk
+  for v1; revisit if the corpus grows or sensitivity changes.
+- **L5. Time Machine / iCloud Drive exclusion.** Mentioned in the
+  README privacy section as a user recommendation but not enforced.
+
+### Already strong (no change needed)
+
+- `.gitignore` blocks `.env*`, `config/credentials.json`,
+  `config/triggers.yaml`, `data/*.sqlite*`, `data/*.log`,
+  `data/*_token.json`, `data/*.json`, `data/*.pickle`.
+- PreToolUse hook + `tools=[]` + `strict_mcp_config=True` keep the
+  agent from inheriting Claude Code's environment or shell access.
+- "Never auto-send" enforced in personality + tool surface + SDK
+  hook for both Gmail and Apple Mail.
+- Group chats etiquette section in `personality.md`.
+
 ## Going-public prep (do BEFORE flipping the repo to public)
 
 A checklist of items to complete before changing the GitHub repo from

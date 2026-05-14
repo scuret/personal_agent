@@ -990,6 +990,47 @@ def step_summary(env: dict[str, str], enabled: set[str]) -> None:
 # ─── Main ───────────────────────────────────────────────────────────────────
 
 
+def step_disclosure(env: dict[str, str]) -> None:
+    """Plain-English privacy disclosure at the top of the install run.
+
+    Gives a fork-and-run user a chance to back out before the
+    configurator writes anything. Skipped silently when the .env
+    already has ANTHROPIC_API_KEY set (re-runs are common; we don't
+    want to nag returning users)."""
+    if env.get("ANTHROPIC_API_KEY", "").strip():
+        return  # not first-run; user has already seen this
+
+    print()
+    _hr("Before you start — privacy & security disclosure")
+    print()
+    print("This installer configures a personal AI agent that:")
+    print()
+    print("  • Stores every conversation, fact, and Claude API event")
+    print("    on your machine in plaintext SQLite under v1/data/.")
+    print("  • Sends every message you exchange AND every email body")
+    print("    the scheduler triages to Anthropic's API for processing.")
+    print("  • Holds OAuth refresh tokens for Gmail, Calendar, Spotify,")
+    print("    and every other connected sub-agent in plaintext files")
+    print("    under v1/data/. Stolen tokens give a third party ~")
+    print("    indefinite access to those services.")
+    print("  • Exposes a local-only web UI at http://127.0.0.1:8780.")
+    print("    No authentication; no CSRF protection. Treat it as you")
+    print("    would a local database port.")
+    print()
+    print("This is a single-user, local-first tool. Don't run it on a")
+    print("shared machine. Don't sync v1/ to iCloud Drive, Dropbox, or")
+    print("Time Machine without thinking through who can access those.")
+    print()
+    print("Read README.md's 'Privacy & security profile' section before")
+    print("continuing. Threat models the agent does and does NOT defend")
+    print("against are spelled out there.")
+    print()
+    if not _yn("Acknowledge and continue?", default=False):
+        print("\nbailing out — nothing was written.")
+        sys.exit(0)
+    print()
+
+
 def main() -> None:
     print()
     print("personal_agent — interactive configurator")
@@ -1004,6 +1045,7 @@ def main() -> None:
 
     env = _read_env()
 
+    step_disclosure(env)
     step_migration(env)
     step_required(env)
     enabled = step_subagents(env)

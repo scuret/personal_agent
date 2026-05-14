@@ -40,10 +40,37 @@
         </ol>
     </div>
 
-    <div class="rounded-lg border border-amber-900 bg-amber-950/30 p-5 text-sm text-amber-100">
+    <div class="rounded-lg border border-amber-900 bg-amber-950/30 p-5 text-sm text-amber-100 mb-4">
         <strong>Heads up:</strong> this agent costs real money to run (~$1–3/day at typical use; spikier on
         build days). Watch spend at any time from <a class="underline" href="/observability">observability</a>
         or via <span class="mono">python -m tools.cost_report</span>. There's no free tier and no demo mode.
+    </div>
+
+    <div class="rounded-lg border border-rose-900 bg-rose-950/30 p-5 text-sm text-rose-100">
+        <p class="mb-3">
+            <strong>⚠ Before you continue — privacy &amp; security:</strong>
+        </p>
+        <ul class="space-y-2 list-disc list-inside ml-2">
+            <li>Every conversation, fact, and Claude API event lives in plaintext SQLite under
+                <span class="mono">v1/data/</span>.</li>
+            <li>Every message you exchange AND every email body the scheduler triages goes to
+                Anthropic&rsquo;s API.</li>
+            <li>OAuth refresh tokens for Gmail, Calendar, Spotify, etc. live in plaintext files
+                under <span class="mono">v1/data/</span>. Stolen tokens give a third party
+                indefinite access until you revoke at the provider.</li>
+            <li>This web UI has no authentication and no CSRF protection. Treat it like a local
+                database port.</li>
+        </ul>
+        <p class="mt-3">
+            This is a single-user, local-first tool. Don&rsquo;t run it on a shared machine.
+            Don&rsquo;t sync <span class="mono">v1/</span> to iCloud Drive / Dropbox / Time Machine
+            without thinking through who can access those.
+        </p>
+        <p class="mt-3">
+            <a href="/about/privacy" class="underline hover:text-rose-50">
+                Read the full privacy &amp; security profile →
+            </a>
+        </p>
     </div>
 </div>
 {% endblock %}

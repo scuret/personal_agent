@@ -49,8 +49,9 @@
     {% block content %}{% endblock %}
 </main>
 
-<footer class="max-w-6xl mx-auto px-4 sm:px-6 py-4 mt-12 text-xs text-zinc-500 border-t border-zinc-900">
+<footer class="max-w-6xl mx-auto px-4 sm:px-6 py-4 mt-12 text-xs text-zinc-500 border-t border-zinc-900 flex items-center justify-between">
     <span>local-only · 127.0.0.1:{{ request.url.port or 8780 }}</span>
+    <a href="/about/privacy" class="hover:text-zinc-300">privacy &amp; security profile →</a>
 </footer>
 
 </body>
