@@ -577,6 +577,30 @@ def _step_imessage_config(env: dict[str, str]) -> None:
         )
 
     print()
+    print("Optional: group chat support.")
+    print("The relay can additionally listen in family / work group chats and")
+    print("respond when triggered. Set IMESSAGE_GROUP_CHATS to opt in, leave")
+    print("empty to skip. After install, you can discover available groups by")
+    print("running:  python -m relay.imessage_relay --check")
+    print("Then re-run this installer (or edit .env directly) to allowlist them.")
+    current_groups = env.get("IMESSAGE_GROUP_CHATS", "")
+    if current_groups:
+        print(f"  Currently: {current_groups}")
+    env["IMESSAGE_GROUP_CHATS"] = _ask(
+        "IMESSAGE_GROUP_CHATS (comma-sep chat_identifier or display_name):",
+        default=current_groups,
+    )
+    if env["IMESSAGE_GROUP_CHATS"].strip():
+        print()
+        print("Group trigger substrings (case-insensitive). The relay only")
+        print("responds when a group message contains one of these. Defaults")
+        print("to '@agent, hey agent, agent,' if left blank.")
+        env["IMESSAGE_GROUP_TRIGGERS"] = _ask(
+            "IMESSAGE_GROUP_TRIGGERS (comma-sep, or empty for defaults):",
+            default=env.get("IMESSAGE_GROUP_TRIGGERS", ""),
+        )
+
+    print()
     print("Reminder: macOS launchd-spawned processes need their own permissions.")
     print("After install, grant:")
     print("  • Full Disk Access → for the venv's Python binary")
@@ -611,6 +635,31 @@ def _step_telegram_config(env: dict[str, str]) -> None:
     env["TELEGRAM_BRIEF_CHAT_ID"] = _ask(
         "TELEGRAM_BRIEF_CHAT_ID:",
         default=env.get("TELEGRAM_BRIEF_CHAT_ID", ""),
+    )
+
+    print()
+    print("Optional: group chat support.")
+    print("Add the bot to a Telegram group, then optionally restrict which")
+    print("groups it'll respond in. Group chat IDs are negative integers;")
+    print("find one by adding @RawDataBot to the target group, or watch the")
+    print("daemon log on first run after the bot is added.")
+    print("Leave empty to allow any group the bot is in (subject to the")
+    print("user allowlist above).")
+    env["TELEGRAM_ALLOWED_CHAT_IDS"] = _ask(
+        "TELEGRAM_ALLOWED_CHAT_IDS (comma-sep, or empty for no filter):",
+        default=env.get("TELEGRAM_ALLOWED_CHAT_IDS", ""),
+    )
+
+    print()
+    print("Group trigger substrings (case-insensitive). The bot always")
+    print("accepts @-mentions of its own username; this extends that list.")
+    print("Defaults to '@agent, hey agent, agent,' if blank.")
+    print("Note: Telegram bots default to 'privacy mode' — they only see")
+    print("direct mentions in groups. To see all group messages, message")
+    print("@BotFather → /setprivacy → Disable.")
+    env["TELEGRAM_GROUP_TRIGGERS"] = _ask(
+        "TELEGRAM_GROUP_TRIGGERS (comma-sep, or empty for defaults):",
+        default=env.get("TELEGRAM_GROUP_TRIGGERS", ""),
     )
 
     print()

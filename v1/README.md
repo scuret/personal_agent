@@ -239,7 +239,15 @@ cd v1
 
 The installer is **idempotent** — re-run anytime to add new sub-agents,
 update keys, or reconfigure parts. Existing values are preserved unless
-you explicitly change them.
+you explicitly change them. The relay step prompts for group-chat
+allowlists (`IMESSAGE_GROUP_CHATS` / `TELEGRAM_ALLOWED_CHAT_IDS`) and
+trigger phrases on top of the primary 1:1 mode.
+
+The web UI's `.env` editor at `/config/env` surfaces any variables
+present in `.env.example` but missing from your live `.env` in an
+"Available in .env.example" block at the top — so when the template
+adds new vars (like the group-chat ones), you can fill them in
+through the browser without re-running the installer.
 
 It also handles **migration**: if you point it at another machine's `v1/`
 directory at the start, it'll copy `.env`, `config/credentials.json`,

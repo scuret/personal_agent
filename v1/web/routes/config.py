@@ -21,6 +21,7 @@ router = APIRouter(prefix="/config")
 
 V1_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = V1_DIR / ".env"
+ENV_EXAMPLE_PATH = V1_DIR / ".env.example"
 TRIGGERS_PATH = V1_DIR / "config" / "triggers.yaml"
 PERSONALITY_PATH = V1_DIR / "config" / "personality.md"
 
@@ -87,6 +88,59 @@ _SECRET_HINTS = (
 )
 
 
+def _keys_from(path: Path) -> set[str]:
+    """Collect every KEY= from a dotenv file. Order-insensitive."""
+    if not path.exists():
+        return set()
+    keys: set[str] = set()
+    for line in path.read_text().splitlines():
+        s = line.strip()
+        if s and not s.startswith("#") and "=" in s:
+            keys.add(line.partition("=")[0].strip())
+    return keys
+
+
+def _missing_from_example_block() -> list[dict]:
+    """Return display lines for `.env.example` vars that the live `.env`
+    doesn't yet have. Rendered as an "available" section at the top of
+    the editor so the user can fill them in without re-running install.
+
+    Each returned entry shares the same shape as `_read_env_lines`,
+    just flagged with `is_missing: True` so the template can style /
+    sort accordingly.
+    """
+    if not ENV_EXAMPLE_PATH.exists() or not ENV_PATH.exists():
+        return []
+    existing = _keys_from(ENV_PATH)
+    out: list[dict] = []
+    last_comment_block: list[str] = []
+    for line in ENV_EXAMPLE_PATH.read_text().splitlines():
+        s = line.strip()
+        if not s:
+            last_comment_block = []
+            continue
+        if s.startswith("#"):
+            last_comment_block.append(line)
+            continue
+        if "=" in s:
+            key = line.partition("=")[0].strip()
+            if key in existing:
+                last_comment_block = []
+                continue
+            is_secret = any(h in key for h in _SECRET_HINTS)
+            out.append({
+                "kind": "var",
+                "key": key,
+                "value": "",
+                "masked_value": "",
+                "is_secret": is_secret,
+                "is_missing": True,
+                "hint": "\n".join(last_comment_block),
+            })
+            last_comment_block = []
+    return out
+
+
 def _read_env_lines() -> list[dict]:
     """Parse .env into a list of {kind, key, value, masked_value, comment}
     entries. Preserves order and comments. The web UI renders this as
@@ -112,6 +166,7 @@ def _read_env_lines() -> list[dict]:
                 "value": value,
                 "masked_value": masked if is_secret else value,
                 "is_secret": is_secret,
+                "is_missing": False,
             })
         else:
             out.append({"kind": "raw", "text": line})
@@ -124,6 +179,7 @@ async def get_env(request: Request, saved: bool = False, reveal: bool = False) -
         request, "config/env.html",
         {
             "lines": _read_env_lines(),
+            "missing_lines": _missing_from_example_block(),
             "saved": saved,
             "reveal": reveal,
         },
@@ -134,12 +190,14 @@ async def get_env(request: Request, saved: bool = False, reveal: bool = False) -
 async def post_env(request: Request) -> RedirectResponse:
     """Re-emit .env from the form. Form fields are `var:KEY` for each
     variable value (preserving order), with empty values cleared.
-    Comments + blank lines come from the canonical order in the form."""
+    Comments + blank lines come from the canonical order in the form.
+
+    Any `missing:KEY` field present in the form is treated as a new
+    variable added from the .env.example surfacing block; if its value
+    is non-empty it gets appended to .env with the matching comment
+    block from .env.example so the live file stays self-documenting.
+    """
     form = await request.form()
-    # Build a fresh file using the current structure: read existing lines,
-    # for each `var` line, replace the value from the form; keep comments
-    # and blanks as-is. (Adding new vars from the UI is a Phase 4 feature;
-    # for now you can only edit existing ones.)
     if not ENV_PATH.exists():
         raise HTTPException(404, ".env not found — run install.sh first")
 
@@ -152,12 +210,36 @@ async def post_env(request: Request) -> RedirectResponse:
             field_name = f"var:{key}"
             new_value = form.get(field_name)
             if new_value is None:
-                # Field wasn't in the form (browser or template glitch); preserve.
                 new_lines.append(line)
             else:
                 new_lines.append(f"{key}={new_value}")
         else:
             new_lines.append(line)
+
+    # Append missing-from-example vars that the user filled in. Pull
+    # their comment block from .env.example so the addition reads the
+    # same as the rest of the file.
+    missing = _missing_from_example_block()
+    additions: list[str] = []
+    for entry in missing:
+        key = entry["key"]
+        value = form.get(f"missing:{key}")
+        if not value:
+            # Empty input — only persist if user explicitly set it
+            # (non-empty); otherwise leave .env untouched so the row
+            # keeps surfacing on the next page load.
+            continue
+        if additions:
+            additions.append("")
+        if entry.get("hint"):
+            additions.extend(entry["hint"].splitlines())
+        additions.append(f"{key}={value}")
+    if additions:
+        if new_lines and new_lines[-1].strip():
+            new_lines.append("")
+        new_lines.append("# ── Added from .env.example via /config/env ──")
+        new_lines.extend(additions)
+
     ENV_PATH.write_text("\n".join(new_lines) + "\n")
     os.chmod(ENV_PATH, 0o600)
     return RedirectResponse("/config/env?saved=1", status_code=303)
