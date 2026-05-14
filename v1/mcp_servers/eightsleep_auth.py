@@ -5,10 +5,20 @@ the Home Assistant integration both reverse-engineer the same REST
 endpoints that the Eight Sleep iOS app uses. We do the same here with
 a thin requests-based wrapper.
 
-Env vars:
-  EIGHT_EMAIL
-  EIGHT_PASSWORD
-  EIGHT_TOKEN_PATH  (default: data/eight_token.json)
+Credentials:
+  EIGHT_EMAIL                 — account email, in .env
+  EIGHT_PASSWORD              — account password. Resolved in order:
+                                1. macOS Keychain entry under service
+                                   `personal_agent_eight_sleep`, account
+                                   `EIGHT_EMAIL`. Use
+                                   `python -m tools.eightsleep_set_password`
+                                   to store it.
+                                2. .env value (fallback). Plaintext on
+                                   disk; only use when Keychain isn't
+                                   available (Linux/Windows fork or
+                                   automated CI).
+  EIGHT_TOKEN_PATH            — session-token cache (default
+                                data/eight_token.json).
 
 The login response returns a session token + expiration. We cache it
 locally; on expiry, we re-login with email/password. There's no OAuth
@@ -34,6 +44,12 @@ import requests
 CLIENT_LOGIN_URL = "https://client-api.8slp.net/v1/login"
 DEFAULT_TOKEN_PATH = "./data/eight_token.json"
 
+# OS keyring identifiers. The service name is global to this app so
+# tools/eightsleep_set_password.py + the auth resolver below agree on
+# where to look. The account name is the user's EIGHT_EMAIL so the
+# keychain can hold multiple personas if needed.
+KEYRING_SERVICE = "personal_agent_eight_sleep"
+
 # Re-login when token is within this window of expiring, to avoid
 # a race between "check" and "use."
 _REFRESH_LEAD_SECONDS = 300
@@ -48,14 +64,54 @@ def _token_path() -> Path:
     return Path(raw) if Path(raw).is_absolute() else (_v1_dir() / raw)
 
 
+def _password_from_keyring(email: str) -> str | None:
+    """Look up the Eight Sleep password in the OS keyring (macOS
+    Keychain on Mac, Secret Service on Linux, Credential Locker on
+    Windows). Returns None if nothing's stored or keyring isn't
+    available (e.g. headless Linux with no D-Bus session).
+    """
+    try:
+        import keyring as _kr  # late import — never crash on missing dep
+    except ImportError:
+        return None
+    try:
+        return _kr.get_password(KEYRING_SERVICE, email) or None
+    except Exception as e:  # noqa: BLE001 — keyring backend may explode
+        print(
+            f"[eightsleep] keyring lookup failed ({type(e).__name__}: {e}); "
+            "falling back to EIGHT_PASSWORD env var if set",
+            file=sys.stderr,
+        )
+        return None
+
+
 def _creds() -> tuple[str, str]:
     email = (os.environ.get("EIGHT_EMAIL") or "").strip()
-    pw = (os.environ.get("EIGHT_PASSWORD") or "").strip()
-    if not email or not pw:
+    if not email:
         raise RuntimeError(
-            "EIGHT_EMAIL and EIGHT_PASSWORD must be set in .env. "
-            "The Eight Sleep API is unofficial — credentials are sent "
-            "directly to their iOS-app login endpoint."
+            "EIGHT_EMAIL must be set in .env. The Eight Sleep API is "
+            "unofficial — credentials are sent directly to their iOS-"
+            "app login endpoint."
+        )
+    # Prefer keyring. Fall back to env var so existing setups keep
+    # working (with a deprecation reminder at log time).
+    pw = _password_from_keyring(email)
+    if not pw:
+        pw = (os.environ.get("EIGHT_PASSWORD") or "").strip()
+        if pw:
+            print(
+                "[eightsleep] using EIGHT_PASSWORD from .env. Move it to "
+                "the macOS Keychain with "
+                "`python -m tools.eightsleep_set_password` for safer "
+                "storage. (ROADMAP H5.)",
+                file=sys.stderr,
+            )
+    if not pw:
+        raise RuntimeError(
+            "Eight Sleep password not found. Either run "
+            "`python -m tools.eightsleep_set_password` to store it in "
+            "the macOS Keychain (recommended), OR set EIGHT_PASSWORD "
+            "in .env (less safe — plaintext on disk)."
         )
     return email, pw
 

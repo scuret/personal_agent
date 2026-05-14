@@ -676,6 +676,15 @@ def _fire_email_watch(store: MemoryStore, config: dict[str, Any], now: datetime)
     if not cfg.get("enabled"):
         return
 
+    # Per-user privacy opt-out. When true, no email content is sent to
+    # Anthropic for triage — and that means no email pings either,
+    # since the triage IS what writes the pings. Other scheduler
+    # surfaces (morning brief, delivery watch, expected arrivals) are
+    # unaffected. See ROADMAP "Security enhancements" M4.
+    if os.environ.get("EMAIL_TRIAGE_LOCAL_ONLY", "").strip().lower() in {"1", "true", "yes"}:
+        store.set_state(_EMAIL_WATCH_LAST_CHECK_KEY, now.isoformat())
+        return
+
     every = int(cfg.get("every_minutes", 15))
     last_check_str = store.get_state(_EMAIL_WATCH_LAST_CHECK_KEY)
     if last_check_str:
@@ -748,6 +757,15 @@ def _fire_email_watch(store: MemoryStore, config: dict[str, Any], now: datetime)
             f"[email_watch] triaged {classified} email(s), "
             f"flagged {len(triaged)}, skipped {skipped_automated} automated"
         )
+        # Visibility into the Anthropic data flow. Logged whether or not
+        # the brief later surfaces it. ROADMAP M4.
+        try:
+            store.log_api_event(
+                kind="email_triage_run",
+                payload={"classified": classified, "flagged": len(triaged)},
+            )
+        except Exception as e:  # noqa: BLE001 — bookkeeping shouldn't crash
+            print(f"[email_watch] triage-count log failed: {e}", file=sys.stderr)
 
     if not triaged:
         return
@@ -1566,6 +1584,45 @@ def _render_deliveries_block(store: MemoryStore, hours: int = 24) -> str:
     return "\n".join(lines)
 
 
+def _render_email_triage_block(store: MemoryStore) -> str:
+    """Visibility line for how many emails got sent to Anthropic for
+    triage in the last 24h. Surfaces the data flow into the morning
+    brief so the user knows what they're paying for in privacy terms.
+
+    Returns "" when nothing was triaged in the window (no need for a
+    line about 0 emails). ROADMAP M4.
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    try:
+        rows = store._conn().execute(  # noqa: SLF001 — internal helper
+            "SELECT payload FROM api_events "
+            "WHERE kind = 'email_triage_run' AND timestamp >= ? "
+            "ORDER BY id DESC",
+            (cutoff,),
+        ).fetchall()
+    except Exception as e:  # noqa: BLE001
+        print(f"[email triage block] query failed: {e}", file=sys.stderr)
+        return ""
+    classified = 0
+    flagged = 0
+    for r in rows:
+        try:
+            data = json.loads(r["payload"])
+            classified += int(data.get("classified", 0))
+            flagged += int(data.get("flagged", 0))
+        except (json.JSONDecodeError, TypeError, KeyError):
+            continue
+    if classified <= 0:
+        return ""
+    # Compact one-liner. The brief prompt is instructed to render it
+    # verbatim near the bottom of the brief (or skip it entirely if
+    # it's not present in the injected block).
+    return (
+        f"📧 triaged {classified} email(s) to Anthropic in the last "
+        f"24h ({flagged} flagged)"
+    )
+
+
 def _render_sleep_block() -> str:
     """Pull last-night Eight Sleep data and format as a brief block.
 
@@ -1576,8 +1633,9 @@ def _render_sleep_block() -> str:
     """
     if not (os.environ.get("EIGHT_EMAIL") or "").strip():
         return ""
-    if not (os.environ.get("EIGHT_PASSWORD") or "").strip():
-        return ""
+    # Password may live in the macOS Keychain (ROADMAP H5), so don't
+    # gate on EIGHT_PASSWORD env presence — let the auth resolver in
+    # mcp_servers.eightsleep_auth raise if neither location has it.
     try:
         from mcp_servers.eightsleep_auth import auth_headers, user_id  # noqa: E402
 
@@ -1710,6 +1768,14 @@ async def _fire_trigger(trigger_name: str) -> None:
             prompt = (
                 f"{prompt}\n\n--- INJECTED SLEEP DATA ---\n"
                 f"{sleep_block}\n--- END SLEEP DATA ---"
+            )
+        triage_block = _render_email_triage_block(store)
+        if triage_block:
+            prompt = (
+                f"{prompt}\n\n--- INJECTED EMAIL TRIAGE STATS ---\n"
+                f"Render this line verbatim at the very bottom of the "
+                f"brief, on its own line, exactly as written:\n"
+                f"{triage_block}\n--- END EMAIL TRIAGE STATS ---"
             )
     # Triggers run on Opus (stronger long-context fidelity) — the relay
     # stays on Sonnet for cost.

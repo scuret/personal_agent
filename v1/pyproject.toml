@@ -60,6 +60,11 @@ dependencies = [
     # adapter uses plain requests. Only one provider runs at a time
     # based on whether GOOGLE_MAPS_API_KEY is set in .env.
     "googlemaps>=4.10",
+
+    # System keyring access — used to hold the Eight Sleep account
+    # password (and any future user secrets that shouldn't live in
+    # plaintext .env). On macOS this maps to the Login Keychain.
+    "keyring>=25.0",
 ]
 
 [project.optional-dependencies]

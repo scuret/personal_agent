@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shutil
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,6 +35,12 @@ UPLOADS_DIR = V1_DIR / "data" / "uploads"
 MAX_IMAGES_PER_TURN = 4
 ALLOWED_IMAGE_MIMES = {"image/jpeg", "image/png", "image/heic", "image/heif", "image/webp", "image/gif"}
 
+# Total cap on the data/uploads/ tree. Once exceeded, oldest
+# conversation-uploads directories get deleted FIFO until under the
+# cap (see _enforce_uploads_cap below). Default 500MB, override via
+# UPLOADS_TOTAL_CAP_MB. Set to 0 to disable. ROADMAP M5.
+_UPLOADS_CAP_MB_DEFAULT = 500
+
 # FastAPI Form/File markers need to be evaluated at module import time
 # (B008: don't call functions in argument defaults) — hoist them here.
 _IMAGES_FIELD = File(default=[])
@@ -40,6 +48,73 @@ _IMAGES_FIELD = File(default=[])
 
 def _store() -> MemoryStore:
     return MemoryStore()
+
+
+def _purge_uploads_for(conv_id: str) -> None:
+    """Delete data/uploads/<conv_id>/ tree, ignoring missing dirs.
+    Called when a conversation closes so sensitive images don't
+    accumulate. ROADMAP M5.
+    """
+    target = UPLOADS_DIR / conv_id
+    if not target.exists() or not target.is_dir():
+        return
+    try:
+        shutil.rmtree(target)
+    except OSError as e:
+        print(f"[chat] failed to purge uploads for {conv_id}: {e}")
+
+
+def _uploads_cap_bytes() -> int:
+    """Return the configured upload-tree cap in bytes, or 0 if disabled."""
+    raw = (os.environ.get("UPLOADS_TOTAL_CAP_MB") or "").strip()
+    if not raw:
+        return _UPLOADS_CAP_MB_DEFAULT * 1024 * 1024
+    try:
+        mb = int(raw)
+    except ValueError:
+        return _UPLOADS_CAP_MB_DEFAULT * 1024 * 1024
+    if mb <= 0:
+        return 0
+    return mb * 1024 * 1024
+
+
+def _enforce_uploads_cap() -> None:
+    """Walk data/uploads/, sum sizes, and FIFO-delete oldest conv dirs
+    until under the cap. Cap of 0 disables. Cheap to call on every
+    send because the typical tree is tiny. ROADMAP M5."""
+    cap = _uploads_cap_bytes()
+    if cap <= 0 or not UPLOADS_DIR.exists():
+        return
+    conv_dirs: list[tuple[float, Path, int]] = []
+    total = 0
+    for child in UPLOADS_DIR.iterdir():
+        if not child.is_dir():
+            continue
+        size = 0
+        oldest_mtime = float("inf")
+        for f in child.rglob("*"):
+            if f.is_file():
+                try:
+                    st = f.stat()
+                except OSError:
+                    continue
+                size += st.st_size
+                oldest_mtime = min(oldest_mtime, st.st_mtime)
+        conv_dirs.append((oldest_mtime, child, size))
+        total += size
+    if total <= cap:
+        return
+    # Oldest first. Stop deleting once we're back under the cap.
+    conv_dirs.sort(key=lambda t: t[0])
+    for _mtime, path, size in conv_dirs:
+        if total <= cap:
+            break
+        try:
+            shutil.rmtree(path)
+            print(f"[chat] uploads cap exceeded — purged {path.name} ({size} bytes)")
+            total -= size
+        except OSError as e:
+            print(f"[chat] cap-purge failed on {path}: {e}")
 
 
 def _ext_from_mime(mime: str) -> str:
@@ -127,6 +202,9 @@ async def send_message(
         )
         body = caption if caption else "(no caption)"
         agent_text = f"{marker_block}\n{body}"
+        # Keep the upload tree bounded so sensitive images don't pile
+        # up forever. ROADMAP M5.
+        _enforce_uploads_cap()
     else:
         agent_text = caption
 
@@ -185,8 +263,11 @@ async def stream(conv_id: str, text: str):
 @router.post("/chat/{conv_id}/end")
 async def end_conversation(conv_id: str) -> dict:
     """Close the current conversation explicitly — next /chat opens a
-    fresh one. Closes the pooled client too."""
+    fresh one. Closes the pooled client too AND purges any image
+    attachments the user dropped into this conversation (ROADMAP M5).
+    """
     store = _store()
     store.close_conversation(conv_id)
     await POOL.close(conv_id)
+    _purge_uploads_for(conv_id)
     return {"ok": True}

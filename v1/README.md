@@ -135,10 +135,22 @@ section in ROADMAP.md.
 - **M2** — daemon log previews trimmed from 80 → 20 chars.
   `tools/rotate_logs.py` already prunes anything older than 7 days.
 
+**Shipped in batch 2 (2026-05-14):**
+- **H5** — Eight Sleep password lives in the macOS Keychain. Run
+  `python -m tools.eightsleep_set_password` to migrate. `.env`
+  password fallback still works (for Linux/Windows forks) with a
+  deprecation reminder at startup.
+- **M4** — set `EMAIL_TRIAGE_LOCAL_ONLY=true` in `.env` to stop
+  the scheduler from sending any email content to Anthropic. The
+  morning brief gains a "📧 triaged N email(s) to Anthropic in the
+  last 24h" visibility line so the data flow is in your face.
+- **M5** — image uploads in the web chat get purged when the
+  conversation closes, and the entire `data/uploads/` tree is
+  size-capped via `UPLOADS_TOTAL_CAP_MB` (default 500 MB) with
+  oldest-first cleanup once the cap is exceeded.
+
 **Still active:** database encryption (H2), git-history scrub for
-`triggers.yaml` (H4), Eight Sleep password → macOS Keychain (H5),
-group-chat third-party retention (M3), email-triage opt-out (M4),
-`data/uploads/` lifecycle (M5).
+`triggers.yaml` (H4), group-chat third-party retention (M3).
 
 The deeper "key rotation + handling discipline" guidance lives in the
 [Privacy + secrets](#privacy--secrets) section further down.

@@ -84,12 +84,16 @@ SUBAGENTS: list[SubAgent] = [
     SubAgent(
         "eightsleep",
         "Eight Sleep — last-night metrics + current bed state + set_temp",
-        env_vars=["EIGHT_EMAIL", "EIGHT_PASSWORD"],
+        env_vars=["EIGHT_EMAIL"],
         setup_url="https://www.eightsleep.com",
         auth_help=(
-            "Email + password from your Eight Sleep account. UNOFFICIAL "
-            "API — could break if Eight Sleep changes endpoints. Sub-"
-            "agent isolates failures from the rest of the agent."
+            "Email from your Eight Sleep account in .env. Password lives "
+            "in the macOS Keychain — run "
+            "`python -m tools.eightsleep_set_password` after this step "
+            "to store it. If you can't use Keychain (Linux/Windows), "
+            "set EIGHT_PASSWORD in .env directly. UNOFFICIAL API — "
+            "could break if Eight Sleep changes endpoints; sub-agent "
+            "isolates failures from the rest of the agent."
         ),
     ),
     SubAgent(

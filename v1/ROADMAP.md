@@ -169,16 +169,17 @@ package understands the risk profile before the deep fixes land.
 ### Active (planned for upcoming sessions)
 
 Batch 1 (shipped 2026-05-14): H1, H3, M1, M2 plus the user-facing
-warning scaffolding. Remaining work:
+warning scaffolding.
+
+Batch 2 (shipped 2026-05-14): H5, M4, M5.
+
+Remaining work:
 
 - **H2** — encrypt the audit-log database (SQLCipher preferred,
   30-day `api_events` retention purge as fallback).
 - **H4** — `git filter-repo` to scrub `config/triggers.yaml` from
   history (also blocks public push; overlaps with going-public #1).
-- **H5** — move `EIGHT_PASSWORD` to the macOS Keychain.
 - **M3** — group-chat third-party retention policy.
-- **M4** — email-triage data flow disclosure + local-only opt-out.
-- **M5** — `data/uploads/` lifecycle.
 
 #### ~~H1. File-permission hardening on tokens, DB, and logs~~ — shipped
 - Every token cache writer (`mcp_servers/dropbox_auth.py`,
@@ -233,16 +234,21 @@ warning scaffolding. Remaining work:
   `git filter-repo --path v1/config/triggers.yaml --invert-paths`,
   then force-push.
 
-#### H5. Move `EIGHT_PASSWORD` to macOS Keychain
-- **Risk:** Eight Sleep has no OAuth alternative — auth uses an
-  email + plaintext password POST. The password sits in `.env` and
-  is the master credential for the account.
-- **Fix:** Use the `keyring` Python package
-  (`security add-generic-password` underneath) to store the password
-  in the macOS Keychain. Read at startup; remove `EIGHT_PASSWORD`
-  from `.env.example`'s required block.
-- **Files:** `mcp_servers/eightsleep_auth.py`, `tools/install.py`,
-  `.env.example`.
+#### ~~H5. Move `EIGHT_PASSWORD` to macOS Keychain~~ — shipped
+- `keyring>=25.0` added to `pyproject.toml`. `mcp_servers/eightsleep_
+  auth.py` now resolves the password by checking the macOS Keychain
+  first (`personal_agent_eight_sleep` service, account = the user's
+  email), then falls back to `EIGHT_PASSWORD` in `.env` with a stderr
+  deprecation reminder.
+- New `python -m tools.eightsleep_set_password` — interactive helper
+  that prompts for the password (`getpass`), stores it in the
+  keyring, and optionally clears `EIGHT_PASSWORD` from `.env`.
+- Installer SubAgent entry updated: only `EIGHT_EMAIL` is required
+  in `.env`; the help text points the user at the keychain tool.
+  `.env.example` documents the Keychain-first / env-fallback choice.
+- Stale `EIGHT_PASSWORD` env check in `scheduler/triggers.py`'s
+  `_render_sleep_block` removed so Keychain-only setups still get
+  the morning brief sleep section.
 
 #### ~~M1. Extend `/config/env` masking to PII fields~~ — shipped
 - `web/routes/config.py` now classifies a var as sensitive via
@@ -288,31 +294,34 @@ warning scaffolding. Remaining work:
   `scheduler/triggers.py`, `web/routes/conversations.py`,
   `config/personality.md`.
 
-#### M4. Email-triage data flow disclosure + local-only opt-out
-- **Risk:** `scheduler/triggers.py:_triage_email_with_haiku` sends
-  every non-automated unread email body (capped at 4000 chars) to
-  Anthropic on every fire. By design, but the user may not realize
-  every personal email gets a one-way trip to Anthropic.
-- **Fix:** (a) README "Privacy & security profile" already spells
-  out this data flow. (b) Add `EMAIL_TRIAGE_LOCAL_ONLY=true` opt-out
-  that falls back to a small local rules-based filter. (c) Morning
-  brief includes a "triaged N emails to Anthropic in last 24h"
-  line so the activity is visible.
-- **Files:** `scheduler/triggers.py`, `.env.example`,
-  `tools/install.py`.
+#### ~~M4. Email-triage data flow disclosure + local-only opt-out~~ — shipped
+- `EMAIL_TRIAGE_LOCAL_ONLY=true` env opt-out. When set, the
+  scheduler short-circuits `_fire_email_watch` before any Anthropic
+  call — no email content leaves the machine. Email pings stop;
+  every other surface (brief, deliveries, expected arrivals) keeps
+  working. Documented in `.env.example` with the trade-off spelled
+  out (no LLM-based local fallback in v1; if you want pings you pay
+  the Anthropic cost).
+- Every `_fire_email_watch` run that classified any emails now logs
+  an `email_triage_run` row to `api_events` with the counts. New
+  `_render_email_triage_block` reads the last 24h of those rows and
+  emits "📧 triaged N email(s) to Anthropic in the last 24h (M
+  flagged)". The morning-brief assembly injects it with explicit
+  rendering instructions so it lands at the bottom of the brief.
+- README privacy section already documents the upstream data flow;
+  the new visibility line surfaces it daily.
 
-#### M5. `data/uploads/` lifecycle
-- **Risk:** Uploaded chat images persist forever under
-  `data/uploads/<conv_id>/`. Sensitive images (IDs, financial docs,
-  medical) stay on disk indefinitely; the `/uploads` static mount
-  has no auth (H3 binding limits to 127.0.0.1, but still).
-- **Fix:** Purge `data/uploads/<conv_id>/` when its conversation
-  closes (`store.close_conversation` hook). Cap total uploads
-  directory size with oldest-first purge above the cap. Document
-  storage + retention in `personality.md`'s Image attachments
-  section.
-- **Files:** `web/routes/chat.py`, `memory/store.py`,
-  `config/personality.md`.
+#### ~~M5. `data/uploads/` lifecycle~~ — shipped
+- `web/routes/chat.py`'s `POST /chat/{conv_id}/end` now recursively
+  deletes `data/uploads/{conv_id}/` after closing the conversation.
+- New `_enforce_uploads_cap()` runs after every successful upload
+  save. Sums the total size of `data/uploads/`, and if it exceeds
+  `UPLOADS_TOTAL_CAP_MB` (default 500MB; set to 0 to disable),
+  deletes oldest-first per-conversation directories until the tree
+  is back under the cap.
+- `.env.example` documents `UPLOADS_TOTAL_CAP_MB`. `personality.md`
+  "Image attachments" tells the agent that older images may have
+  been purged so it doesn't confabulate when asked about them.
 
 ### Recorded for future consideration (LOW — no implementation planned)
 
