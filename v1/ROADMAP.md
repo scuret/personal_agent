@@ -176,10 +176,13 @@ Batch 2 (shipped 2026-05-14): H5, M4, M5.
 Batch 3 (shipped 2026-05-14): H2 (fallback path — audit-log
 retention purge; SQLCipher path deferred to future), M3.
 
-Remaining work:
+Batch 4 (shipped 2026-05-14): H4 file removal — `git filter-repo`
+rewrote all 67 commits; the 15-email allowlist is no longer in any
+historical diff. Residual placeholder references in tracked docs
+fold into going-public #9 (final secret sweep).
 
-- **H4** — `git filter-repo` to scrub `config/triggers.yaml` from
-  history. Blocks public push; overlaps with going-public #1.
+Remaining work: none in this section. The smaller cleanups for
+documentation references happen as part of going-public #9.
 
 #### ~~H1. File-permission hardening on tokens, DB, and logs~~ — shipped
 - Every token cache writer (`mcp_servers/dropbox_auth.py`,
@@ -233,16 +236,26 @@ Remaining work:
   two-step opt-in. CSRF tokens / Origin header checks / `/uploads`
   auth remain out of scope as acceptable risk for v1.
 
-#### H4. Scrub `triggers.yaml` from git history
-- **Risk:** `config/triggers.yaml` was tracked in commits `bd1168a`,
-  `3fc4584`, `4284f35` with 15 real personal email addresses. Removed
-  in `32c0fdd` but persists in history. Once the repo flips public,
-  `git log -p` exposes everything irreversibly.
-- **Fix:** Already on the going-public prep list as item #1.
-  Reaffirmed here as a security blocker before any public push.
-  `pip install git-filter-repo` then
-  `git filter-repo --path v1/config/triggers.yaml --invert-paths`,
-  then force-push.
+#### ~~H4. Scrub `triggers.yaml` from git history~~ — shipped (file removal)
+- `git filter-repo --path v1/config/triggers.yaml --invert-paths`
+  rewrote all 67 commits. The original 15-email allowlist no longer
+  appears in `git log -p` for any commit. HEAD moved from
+  `bdb7a16` → `229de80`; every prior hash changed too.
+- Repo backup saved at
+  `~/personal_agent_backup_before_H4_<timestamp>.tgz` (283 MB)
+  before the rewrite, in case rollback is ever needed.
+- `origin` remote was wiped by filter-repo (its safety default) and
+  re-added immediately afterwards.
+- Force-push to GitHub is the next step but is **deferred until the
+  user is ready to push**. The local repo is in the rewritten state
+  and will not match any pre-existing remote history.
+- **Residual references in tracked docs (separate decision):** the
+  `git log` verification line in this ROADMAP and an example in
+  `v1/config/triggers.yaml.example` still mention placeholder
+  personal-name strings (used as illustrative tokens, not real
+  contacts in active use). They're a smaller, separate scrub
+  controlled by going-public #9 (final secret sweep), not this
+  H4 entry.
 
 #### ~~H5. Move `EIGHT_PASSWORD` to macOS Keychain~~ — shipped
 - `keyring>=25.0` added to `pyproject.toml`. `mcp_servers/eightsleep_
@@ -379,18 +392,23 @@ private to public. Most are remote-doable. Don't push the repo public
 until everything in this section is done — once a public push lands,
 the audit is irreversible (anyone can clone before you tighten things).
 
-### 1. Scrub personal email history (REQUIRED)
-- **What:** Commit `bd1168a` and the surrounding history contain 15
-  real email addresses of friends, family, and colleagues from the
-  era when `config/triggers.yaml` was tracked. Removing the file in
-  a later commit doesn't remove the addresses from history — anyone
-  cloning a public repo can `git log -p` and read them.
-- **Action:** `pip install git-filter-repo` then
-  `git filter-repo --path v1/config/triggers.yaml --invert-paths`
-  to rewrite history with that file removed from every commit. Then
-  force-push (only safe because nothing's been pushed yet).
-- **Verify:** `git log --all -p | grep -i <your-personal-search-term>` should return zero
-  matches (or substitute any other personal address).
+### ~~1. Scrub personal email history~~ — shipped (file removal phase)
+- `git filter-repo --path v1/config/triggers.yaml --invert-paths`
+  ran on 2026-05-14. All 67 commits rewritten; the 15-email
+  allowlist is gone from history. `git log -- v1/config/triggers.yaml`
+  returns empty (no commit ever touches the file in the current
+  history graph).
+- **Outstanding for the final pre-public sweep (item #9):**
+  placeholder references to personal-name search tokens in
+  `v1/ROADMAP.md` (this file, in the H4 verification example) and
+  `v1/config/triggers.yaml.example` (a commented expected_arrivals
+  example) still appear in tracked content. They're not the active
+  PII allowlist that the original H4 scope targeted, but they
+  should be genericized before any public push.
+- **Force-push deferred** — the local repo is in the rewritten
+  state and won't match the (currently non-existent) origin. When
+  ready to push: `git push --force origin main` after confirming
+  no other clones / collaborators exist.
 
 ### ~~2. Add a LICENSE~~ — shipped
 - MIT License at repo root (`/LICENSE`), 2026, Stephen Curet.

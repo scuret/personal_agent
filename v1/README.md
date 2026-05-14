@@ -164,7 +164,18 @@ section in ROADMAP.md.
   toggle; when shown they get an amber "group member" label so
   they're visually distinct from your own content.
 
-**Still active:** git-history scrub for `triggers.yaml` (H4).
+**Shipped in batch 4 (2026-05-14):**
+- **H4** — `git filter-repo` rewrote all 67 commits to remove
+  `v1/config/triggers.yaml` from every historical diff. The
+  15-email allowlist is gone from history. Pre-rewrite repo backup
+  saved at `~/personal_agent_backup_before_H4_<timestamp>.tgz`
+  (283 MB). Force-push to GitHub is deferred until the user is
+  ready; the local repo is in the rewritten state and won't match
+  a pre-existing remote history graph.
+
+**Still active in the security section:** none. The smaller
+documentation cleanups (placeholder name references in ROADMAP +
+triggers.yaml.example) fold into the going-public final-sweep step.
 
 The deeper "key rotation + handling discipline" guidance lives in the
 [Privacy + secrets](#privacy--secrets) section further down.
