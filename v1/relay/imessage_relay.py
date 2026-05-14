@@ -59,11 +59,20 @@ LAST_SEEN_KEY = "imessage_last_seen_rowid"
 CONVERSATION_SOURCE = "imessage"
 CONVERSATION_GAP_HOURS = 4.0
 
-# Mode dispatch. "contact" filters on a single SENDER handle (incoming from
-# someone else). "self" listens to your own messages in note-to-self chats
-# (is_from_me=1) so you can text your own agent.
+# Primary-mode dispatch. "contact" filters on a single SENDER handle
+# (incoming from someone else). "self" listens to your own messages in
+# note-to-self chats so you can text your own agent. Group-chat support
+# is additive on top of the primary mode (see IMESSAGE_GROUP_CHATS) so
+# you can text the agent both in note-to-self AND in family / work
+# groups from the same daemon.
 MODE_CONTACT = "contact"
 MODE_SELF = "self"
+
+# When IMESSAGE_GROUP_TRIGGERS is unset, this is the default substring
+# list that gates whether a group message becomes an agent turn. Case-
+# insensitive substring match. "@agent" is the canonical trigger; the
+# extras catch natural phrasings.
+DEFAULT_GROUP_TRIGGERS = ("@agent", "hey agent", "agent,")
 
 # Outgoing-message marker. Every message the relay sends via AppleScript
 # is prefixed with U+200B (zero-width space). On read, the relay skips
@@ -188,6 +197,41 @@ def _self_handles() -> list[str]:
     return [h for h in handles if h]
 
 
+def _group_chats() -> list[str]:
+    """List of group-chat identifiers (or display names) the relay listens
+    to, from IMESSAGE_GROUP_CHATS. Each entry can be either:
+
+      - a chat.db `chat_identifier` like `chat657054710918744555`
+      - a human-readable `display_name` like `Family Group`
+
+    The reader matches on either column. Empty / unset = group support
+    disabled, only the primary mode runs.
+    """
+    raw = os.environ.get("IMESSAGE_GROUP_CHATS", "").strip()
+    if not raw:
+        return []
+    return [chunk.strip() for chunk in raw.split(",") if chunk.strip()]
+
+
+def _group_triggers() -> list[str]:
+    """Mention substrings that must appear in a group message before it
+    becomes an agent turn. Read from IMESSAGE_GROUP_TRIGGERS (comma-sep),
+    case-insensitive. Falls back to DEFAULT_GROUP_TRIGGERS.
+    """
+    raw = os.environ.get("IMESSAGE_GROUP_TRIGGERS", "").strip()
+    if not raw:
+        return [t.lower() for t in DEFAULT_GROUP_TRIGGERS]
+    return [chunk.strip().lower() for chunk in raw.split(",") if chunk.strip()]
+
+
+def _matches_group_trigger(text: str, triggers: list[str]) -> bool:
+    """Case-insensitive substring match against the trigger list."""
+    if not text:
+        return False
+    lo = text.lower()
+    return any(t in lo for t in triggers)
+
+
 def _resolve_send_handle() -> str:
     """Where outgoing iMessages get sent.
 
@@ -230,12 +274,23 @@ class ChatReader:
           we drop any incoming message whose text starts with it.
     """
 
-    def __init__(self, mode: str, target_handle: str, self_handles: list[str]) -> None:
+    def __init__(
+        self,
+        mode: str,
+        target_handle: str,
+        self_handles: list[str],
+        group_chats: list[str] | None = None,
+        group_triggers: list[str] | None = None,
+    ) -> None:
         if mode not in (MODE_CONTACT, MODE_SELF):
             raise ValueError(f"unknown IMESSAGE_MODE: {mode!r}")
         self.mode = mode
         self.target_handle = target_handle
         self.self_handles = self_handles
+        # Group support is additive: the primary mode (contact / self)
+        # still runs as before. Empty group list = disabled.
+        self.group_chats: list[str] = group_chats or []
+        self.group_triggers: list[str] = group_triggers or []
 
     def _connect(self) -> sqlite3.Connection:
         if not CHAT_DB.exists():
@@ -293,10 +348,23 @@ class ChatReader:
         window, even for rows we filter out (empty pseudo-messages, our
         own outgoing replies). The daemon uses it to advance `last_seen`
         past skipped rows so they don't get re-fetched forever.
+
+        Runs the primary-mode fetcher (contact or self) AND, when
+        `group_chats` is non-empty, the group fetcher. Results are
+        merged by rowid; max_rowid is the max across both.
         """
         if self.mode == MODE_CONTACT:
-            return self._fetch_contact(last_rowid, limit)
-        return self._fetch_self(last_rowid, limit)
+            primary, primary_max = self._fetch_contact(last_rowid, limit)
+        else:
+            primary, primary_max = self._fetch_self(last_rowid, limit)
+
+        if not self.group_chats:
+            return primary, primary_max
+
+        group_msgs, group_max = self._fetch_group(last_rowid, limit)
+        combined = primary + group_msgs
+        combined.sort(key=lambda m: m["rowid"])
+        return combined, max(primary_max, group_max)
 
     def _fetch_contact(
         self, last_rowid: int, limit: int
@@ -377,6 +445,109 @@ class ChatReader:
             result.append(self._row_to_dict(r, final))
         return result, max_rowid
 
+    def _fetch_group(
+        self, last_rowid: int, limit: int
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Pull messages from allowlisted group chats.
+
+        Matches the chat by either `chat_identifier` (e.g. chat65705...)
+        or `display_name` (e.g. "Family"). Returns messages that meet
+        ALL of:
+          - chat is in the allowlist
+          - text doesn't start with OUTGOING_MARKER (our own outbound)
+          - text contains at least one trigger substring
+
+        Includes both is_from_me=0 (sent by other group members) and
+        is_from_me=1 (sent by the user from their phone — still routes
+        through chat.db on this Mac via iCloud sync). Loop prevention
+        is the marker filter, not is_from_me.
+
+        Each returned dict carries `chat_identifier` so the daemon can
+        route the reply back to the originating group.
+        """
+        if not self.group_chats:
+            return [], last_rowid
+        placeholders = ",".join("?" * len(self.group_chats))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""SELECT m.ROWID AS rowid, m.text, m.attributedBody, m.date,
+                            m.is_from_me, h.id AS sender,
+                            c.chat_identifier AS chat_identifier,
+                            c.display_name AS chat_display_name
+                     FROM message m
+                     JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+                     JOIN chat c ON c.ROWID = cmj.chat_id
+                LEFT JOIN handle h ON m.handle_id = h.ROWID
+                    WHERE (c.chat_identifier IN ({placeholders})
+                           OR c.display_name IN ({placeholders}))
+                      AND m.ROWID > ?
+                 ORDER BY m.ROWID ASC
+                    LIMIT ?""",
+                (*self.group_chats, *self.group_chats, last_rowid, limit),
+            ).fetchall()
+
+        result: list[dict[str, Any]] = []
+        max_rowid = last_rowid
+        for r in rows:
+            max_rowid = max(max_rowid, int(r["rowid"]))
+            text = _resolve_text(r)
+            if text.startswith(OUTGOING_MARKER):
+                continue
+            attachments = self._image_attachments_for(int(r["rowid"]))
+            if not text.strip() and not attachments:
+                continue
+            # In group chats we ONLY respond when a trigger substring
+            # appears. The trigger check happens against the raw text
+            # (before any attachment-marker prepending) so images
+            # without a captioned mention don't accidentally fire.
+            if self.group_triggers and not _matches_group_trigger(
+                text, self.group_triggers
+            ):
+                continue
+            final = _format_message_for_agent(text, attachments)
+            entry = self._row_to_dict(r, final)
+            entry["chat_identifier"] = r["chat_identifier"]
+            entry["chat_display_name"] = r["chat_display_name"]
+            entry["is_group"] = True
+            result.append(entry)
+        return result, max_rowid
+
+    def list_discoverable_groups(self) -> list[dict[str, Any]]:
+        """Diagnostic helper: return every group chat currently visible
+        in chat.db with its identifier + display name + participant
+        count + last-message timestamp. Used by --check to give the
+        user the exact string they need for IMESSAGE_GROUP_CHATS.
+        """
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT c.chat_identifier, c.display_name, c.style,
+                          (SELECT COUNT(*) FROM chat_handle_join WHERE chat_id = c.ROWID)
+                              AS participants,
+                          (SELECT MAX(m.date)
+                             FROM chat_message_join cmj
+                             JOIN message m ON m.ROWID = cmj.message_id
+                            WHERE cmj.chat_id = c.ROWID) AS last_msg_date
+                     FROM chat c
+                    WHERE c.style = 43
+                 ORDER BY (last_msg_date IS NULL) ASC, last_msg_date DESC
+                    LIMIT 50"""
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            ts: str | None = None
+            if r["last_msg_date"]:
+                try:
+                    ts = _apple_ns_to_dt(int(r["last_msg_date"])).isoformat()
+                except (TypeError, ValueError):
+                    ts = None
+            out.append({
+                "chat_identifier": r["chat_identifier"],
+                "display_name": r["display_name"] or "(no name)",
+                "participants": int(r["participants"] or 0),
+                "last_message": ts,
+            })
+        return out
+
     @staticmethod
     def _row_to_dict(r: sqlite3.Row, text: str) -> dict[str, Any]:
         return {
@@ -401,13 +572,29 @@ class ChatReader:
 
 
 class ChatSender:
-    """Sends one iMessage at a time via AppleScript."""
+    """Sends one iMessage at a time via AppleScript.
+
+    Has two send paths:
+
+      * `send(text)` — 1:1 to the default `target_handle` set at
+        construction. Used by `relay.sender.make_sender` and by the
+        scheduler's brief / reminder path.
+      * `send_to_chat_id(chat_id, text)` — addressed to a specific
+        chat by its `chat_identifier` (e.g. `chat657054710918744555`
+        for a group). Used by the daemon when routing a reply back to
+        the originating group chat.
+    """
+
+    # AppleScript "id" for a chat takes the form "iMessage;+;<chat_id>"
+    # for group chats and "iMessage;-;<handle>" for 1:1 chats. We only
+    # construct the group form here — 1:1 sends still go via `buddy`,
+    # which is more forgiving across iCloud accounts.
+    _GROUP_ID_PREFIX = "iMessage;+;"
 
     def __init__(self, target_handle: str) -> None:
         self.target_handle = target_handle
 
-    def _script(self, text: str) -> str:
-        # Escape backslashes first, then double-quotes — order matters.
+    def _buddy_script(self, text: str) -> str:
         safe = text.replace("\\", "\\\\").replace('"', '\\"')
         return f"""
         tell application "Messages"
@@ -417,15 +604,50 @@ class ChatSender:
         end tell
         """
 
-    def send(self, text: str) -> tuple[bool, str]:
-        """Send `text` via iMessage. Returns (ok, error_message_if_not).
+    def _chat_script(self, chat_identifier: str, text: str) -> str:
+        safe = text.replace("\\", "\\\\").replace('"', '\\"')
+        # `chat_identifier` from chat.db is bare ("chat65705...");
+        # AppleScript expects the service-prefixed form.
+        chat_id = (
+            chat_identifier
+            if chat_identifier.startswith(self._GROUP_ID_PREFIX)
+            else self._GROUP_ID_PREFIX + chat_identifier
+        )
+        return f"""
+        tell application "Messages"
+            set targetChat to a reference to chat id "{chat_id}"
+            send "{safe}" to targetChat
+        end tell
+        """
 
-        Outgoing text is prefixed with OUTGOING_MARKER (zero-width space)
-        so ChatReader's self-mode filter can ignore the relay's own
-        replies and avoid an infinite loop. Invisible to the human reader.
+    def send(self, text: str) -> tuple[bool, str]:
+        """1:1 send to the default target. Returns (ok, error_msg).
+
+        Outgoing text is prefixed with OUTGOING_MARKER (zero-width
+        space) so ChatReader can ignore the relay's own replies and
+        avoid loops. Invisible to the human reader.
         """
         try:
-            applescript.AppleScript(source=self._script(OUTGOING_MARKER + text)).run()
+            applescript.AppleScript(
+                source=self._buddy_script(OUTGOING_MARKER + text)
+            ).run()
+            return True, ""
+        except applescript.ScriptError as e:
+            return False, f"AppleScript error: {e}"
+        except Exception as e:  # noqa: BLE001
+            return False, f"{type(e).__name__}: {e}"
+
+    def send_to_chat_id(self, chat_identifier: str, text: str) -> tuple[bool, str]:
+        """Send to a specific chat (group or 1:1) by chat_identifier.
+
+        OUTGOING_MARKER applied same as `send`. The marker propagates
+        through chat.db when the message gets echoed back to us,
+        keeping loop prevention intact for group mode.
+        """
+        try:
+            applescript.AppleScript(
+                source=self._chat_script(chat_identifier, OUTGOING_MARKER + text)
+            ).run()
             return True, ""
         except applescript.ScriptError as e:
             return False, f"AppleScript error: {e}"
@@ -445,11 +667,20 @@ async def _run_daemon(
     target_handle: str,
     self_handles: list[str],
     poll_interval: float,
+    group_chats: list[str] | None = None,
+    group_triggers: list[str] | None = None,
 ) -> None:
     store = MemoryStore()
-    reader = ChatReader(mode=mode, target_handle=target_handle, self_handles=self_handles)
+    reader = ChatReader(
+        mode=mode,
+        target_handle=target_handle,
+        self_handles=self_handles,
+        group_chats=group_chats or [],
+        group_triggers=group_triggers or [],
+    )
     # In self mode we send replies back to the same self handle the user
-    # is texting. In contact mode we send to the contact.
+    # is texting. In contact mode we send to the contact. Group replies
+    # route per-message via `send_to_chat_id`, regardless of this default.
     sender_handle = self_handles[0] if mode == MODE_SELF else target_handle
     sender = ChatSender(sender_handle)
 
@@ -469,17 +700,17 @@ async def _run_daemon(
         watching = f"self mode (chats: {', '.join(self_handles)})"
     else:
         watching = f"contact mode (sender: {target_handle})"
+    if group_chats:
+        watching += (
+            f" + {len(group_chats)} group chat(s) with triggers="
+            f"{group_triggers or []}"
+        )
     print(f"relay started — {watching}, poll every {poll_interval}s. ctrl-c to stop.")
 
     # One long-running SDK session for the whole relay process. Conversation
     # rollover (4h gap) updates only the archive's conversation_id; the SDK
     # client keeps full immediate context across the gap.
     async with ClaudeSDKClient(options=options) as client:
-        conversation_id = store.resume_or_open_conversation(
-            source=CONVERSATION_SOURCE,
-            gap_threshold_hours=CONVERSATION_GAP_HOURS,
-            metadata={"handle": target_handle},
-        )
         while True:
             try:
                 new_msgs, max_rowid = reader.fetch_new_since(last_seen)
@@ -489,15 +720,31 @@ async def _run_daemon(
                 continue
 
             for msg in new_msgs:
-                # 4h-gap rollover check. We only roll the archive's
-                # conversation_id — the SDK session is left alone.
+                is_group = bool(msg.get("is_group"))
+                chat_identifier = msg.get("chat_identifier") or ""
+                # 4h-gap rollover. Per-chat metadata so the archive can
+                # distinguish group conversations from 1:1 ones.
+                conv_metadata: dict[str, Any] = {
+                    "handle": target_handle,
+                    "is_group": is_group,
+                }
+                if is_group:
+                    conv_metadata["chat_identifier"] = chat_identifier
+                    conv_metadata["chat_display_name"] = msg.get(
+                        "chat_display_name"
+                    )
                 conversation_id = store.resume_or_open_conversation(
                     source=CONVERSATION_SOURCE,
                     gap_threshold_hours=CONVERSATION_GAP_HOURS,
-                    metadata={"handle": target_handle},
+                    metadata=conv_metadata,
                 )
 
-                print(f"[in @ {_now_iso()}] {msg['text'][:80]}")
+                origin = (
+                    f"group={msg.get('chat_display_name') or chat_identifier}"
+                    if is_group
+                    else "1:1"
+                )
+                print(f"[in @ {_now_iso()}] ({origin}) {msg['text'][:80]}")
                 try:
                     reply = await process_turn(
                         client, store, conversation_id, msg["text"]
@@ -506,14 +753,18 @@ async def _run_daemon(
                     print(f"[agent error] {e}", file=sys.stderr)
                     continue
 
-                if reply:
-                    ok, err = sender.send(reply)
-                    if ok:
-                        print(f"[out] {reply[:80]}")
-                    else:
-                        print(f"[send failed] {err}", file=sys.stderr)
-                else:
+                if not reply:
                     print("[no reply]")
+                    continue
+
+                if is_group and chat_identifier:
+                    ok, err = sender.send_to_chat_id(chat_identifier, reply)
+                else:
+                    ok, err = sender.send(reply)
+                if ok:
+                    print(f"[out → {origin}] {reply[:80]}")
+                else:
+                    print(f"[send failed] {err}", file=sys.stderr)
 
             # Advance past everything we saw (including filtered-out rows
             # like empty pseudo-messages and our own marker-tagged replies)
@@ -528,7 +779,13 @@ async def _run_daemon(
 # ─── Diagnostics ─────────────────────────────────────────────────────────────
 
 
-def _check(mode: str, target_handle: str, self_handles: list[str]) -> int:
+def _check(
+    mode: str,
+    target_handle: str,
+    self_handles: list[str],
+    group_chats: list[str] | None = None,
+    group_triggers: list[str] | None = None,
+) -> int:
     print("=== iMessage relay diagnostics ===\n")
 
     if mode not in (MODE_CONTACT, MODE_SELF):
@@ -553,7 +810,13 @@ def _check(mode: str, target_handle: str, self_handles: list[str]) -> int:
         print(f"✗ chat.db not found at {CHAT_DB}")
         return 1
 
-    reader = ChatReader(mode=mode, target_handle=target_handle, self_handles=self_handles)
+    reader = ChatReader(
+        mode=mode,
+        target_handle=target_handle,
+        self_handles=self_handles,
+        group_chats=group_chats or [],
+        group_triggers=group_triggers or [],
+    )
     ok, why = reader.can_read()
     if not ok:
         print(f"✗ cannot read chat.db: {why}")
@@ -565,9 +828,38 @@ def _check(mode: str, target_handle: str, self_handles: list[str]) -> int:
     print(f"✓ chat.db readable at {CHAT_DB}")
     print(f"  current latest rowid: {reader.latest_rowid()}")
 
+    # Group chat status + discovery
+    print()
+    if group_chats:
+        print(f"✓ IMESSAGE_GROUP_CHATS = {group_chats}")
+        print(f"✓ IMESSAGE_GROUP_TRIGGERS = {group_triggers or []}")
+    else:
+        print(
+            "  IMESSAGE_GROUP_CHATS is unset — group support disabled. "
+            "Available groups in your chat.db (top 50, most-recent first):"
+        )
+        try:
+            groups = reader.list_discoverable_groups()
+        except Exception as e:  # noqa: BLE001
+            print(f"  (group enumeration failed: {e})")
+            groups = []
+        if not groups:
+            print("    (no group chats found)")
+        else:
+            for g in groups[:15]:
+                last = (g.get("last_message") or "")[:10] or "?"
+                name = g.get("display_name") or "(no name)"
+                print(
+                    f"    - {name}  [{g['chat_identifier']}]  "
+                    f"{g['participants']} ppl  last: {last}"
+                )
+            if len(groups) > 15:
+                print(f"    … and {len(groups) - 15} more")
+
     # AppleScript permission isn't checkable without trying to send. We
     # don't actually send a probe — the first real send will trigger the
     # macOS prompt if needed.
+    print()
     print(
         "✓ AppleScript send is not pre-validated; macOS will prompt the first "
         "time you actually run the daemon and it tries to send."
@@ -586,9 +878,11 @@ def main() -> None:
     target_handle = os.environ.get("TARGET_PHONE_NUMBER", "").strip()
     self_handles = _self_handles() if mode == MODE_SELF else []
     poll_interval = float(os.environ.get("IMESSAGE_POLL_INTERVAL", "5"))
+    group_chats = _group_chats()
+    group_triggers = _group_triggers() if group_chats else []
 
     if "--check" in sys.argv:
-        sys.exit(_check(mode, target_handle, self_handles))
+        sys.exit(_check(mode, target_handle, self_handles, group_chats, group_triggers))
 
     if not target_handle:
         print("error: TARGET_PHONE_NUMBER not set in .env", file=sys.stderr)
@@ -601,7 +895,10 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        asyncio.run(_run_daemon(mode, target_handle, self_handles, poll_interval))
+        asyncio.run(_run_daemon(
+            mode, target_handle, self_handles, poll_interval,
+            group_chats=group_chats, group_triggers=group_triggers,
+        ))
     except KeyboardInterrupt:
         print("\nrelay stopped.")
 

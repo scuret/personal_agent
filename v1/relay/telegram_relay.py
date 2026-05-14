@@ -70,6 +70,18 @@ CONVERSATION_GAP_HOURS = 4.0
 LONG_POLL_TIMEOUT_S = 30
 HTTP_TIMEOUT_S = 40  # > LONG_POLL_TIMEOUT_S
 
+# Telegram chat types. Private = DM with the bot. Group / supergroup =
+# multi-user chats the bot has been added to. Channels aren't supported
+# (one-way broadcast, no useful interaction model for this agent).
+_PRIVATE_CHAT_TYPES = {"private"}
+_GROUP_CHAT_TYPES = {"group", "supergroup"}
+
+# Fallback group triggers used when TELEGRAM_GROUP_TRIGGERS is empty.
+# We always also accept an @bot_username mention, resolved at startup
+# via getMe — that handles the case where the user just types
+# "@my_personal_agent_bot what's on my calendar?" in a group.
+DEFAULT_GROUP_TRIGGERS = ("@agent", "hey agent", "agent,")
+
 
 def _bot_token() -> str:
     t = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -92,6 +104,50 @@ def _allowed_user_ids() -> set[int]:
         except ValueError:
             print(f"[telegram] ignoring non-integer user id {chunk!r}", file=sys.stderr)
     return out
+
+
+def _allowed_chat_ids() -> set[int]:
+    """Chat-level allowlist for group chats. When set, the bot only
+    responds in these chat IDs (in addition to the user-level allowlist).
+    Empty / unset means no chat-level restriction — any chat the bot is
+    in, where the from-user is allowlisted, is fair game.
+
+    Telegram group chat IDs are typically negative integers; private
+    chat IDs match the user_id. Find a group's chat_id by sending a
+    message in it and inspecting the daemon log on first run, or via
+    @RawDataBot in the target group.
+    """
+    raw = os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "").strip()
+    if not raw:
+        return set()
+    out: set[int] = set()
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            out.add(int(chunk))
+        except ValueError:
+            print(f"[telegram] ignoring non-integer chat id {chunk!r}", file=sys.stderr)
+    return out
+
+
+def _group_triggers() -> list[str]:
+    """Mention substrings that gate group-chat responses. The bot's own
+    @-mention is always accepted (added in _run_daemon after the getMe
+    lookup); the values from TELEGRAM_GROUP_TRIGGERS extend the set.
+    """
+    raw = os.environ.get("TELEGRAM_GROUP_TRIGGERS", "").strip()
+    if not raw:
+        return [t.lower() for t in DEFAULT_GROUP_TRIGGERS]
+    return [chunk.strip().lower() for chunk in raw.split(",") if chunk.strip()]
+
+
+def _matches_group_trigger(text: str, triggers: list[str]) -> bool:
+    if not text:
+        return False
+    lo = text.lower()
+    return any(t in lo for t in triggers)
 
 
 def _resolve_telegram_chat_id() -> int:
@@ -256,12 +312,25 @@ def _now_iso() -> str:
 async def _run_daemon() -> None:
     store = MemoryStore()
     allowed = _allowed_user_ids()
+    allowed_chats = _allowed_chat_ids()
     if not allowed:
         print(
             "WARNING: TELEGRAM_ALLOWED_USER_IDS is empty — bot will ignore everyone. "
             "Add at least your own Telegram user id (find via @userinfobot).",
             file=sys.stderr,
         )
+
+    # Resolve the bot's @username so we can always accept @-mentions of
+    # the bot in group chats, even when TELEGRAM_GROUP_TRIGGERS is set.
+    bot_username = ""
+    try:
+        me = _api_get("getMe").get("result") or {}
+        bot_username = (me.get("username") or "").lower()
+    except Exception as e:  # noqa: BLE001
+        print(f"[telegram] getMe failed at startup: {e}", file=sys.stderr)
+    group_triggers = _group_triggers()
+    if bot_username and f"@{bot_username}" not in group_triggers:
+        group_triggers.append(f"@{bot_username}")
 
     # On first run start from the latest update so we don't replay history.
     last_seen_str = store.get_state(LAST_UPDATE_KEY)
@@ -274,9 +343,12 @@ async def _run_daemon() -> None:
         print(f"[telegram] resuming from update_id {last_update_id}")
 
     options = build_options(store)
+    chat_scope = (
+        f"chats: {sorted(allowed_chats)}" if allowed_chats else "no chat-level filter"
+    )
     print(
-        f"[telegram] relay started (allowed users: {sorted(allowed)}). "
-        "ctrl-c to stop."
+        f"[telegram] relay started (users: {sorted(allowed)}, "
+        f"{chat_scope}, group triggers: {group_triggers}). ctrl-c to stop."
     )
 
     async with ClaudeSDKClient(options=options) as client:
@@ -309,20 +381,61 @@ async def _run_daemon() -> None:
                     )
                     continue
 
+                chat = msg.get("chat") or {}
+                chat_type = (chat.get("type") or "").lower()
+                chat_id = chat.get("id", user_id)
+
+                # Channels are broadcast-only; we don't engage there.
+                if chat_type not in _PRIVATE_CHAT_TYPES | _GROUP_CHAT_TYPES:
+                    print(
+                        f"[telegram] ignoring chat_type={chat_type!r} "
+                        f"(chat_id={chat_id})"
+                    )
+                    continue
+
+                is_group = chat_type in _GROUP_CHAT_TYPES
+                if is_group and allowed_chats and chat_id not in allowed_chats:
+                    print(
+                        f"[telegram] ignoring group chat_id={chat_id} "
+                        f"(not in TELEGRAM_ALLOWED_CHAT_IDS)"
+                    )
+                    continue
+
                 text, attachments = _extract_text_and_attachments(msg)
                 if not text.strip() and not attachments:
                     print(f"[telegram] skipping empty message update_id={upd_id}")
                     continue
 
+                # Group chats require an explicit trigger so the bot
+                # doesn't respond to every message in the room. Private
+                # chats are 1:1 — respond to everything from allowed users.
+                if is_group and not _matches_group_trigger(text, group_triggers):
+                    continue
+
                 # Conversation rollover: 4h-gap rule, same as iMessage relay.
+                conv_metadata: dict[str, Any] = {
+                    "user_id": user_id,
+                    "chat_id": chat_id,
+                    "chat_type": chat_type,
+                }
+                if is_group:
+                    conv_metadata["chat_title"] = chat.get("title")
                 conversation_id = store.resume_or_open_conversation(
                     source=CONVERSATION_SOURCE,
                     gap_threshold_hours=CONVERSATION_GAP_HOURS,
-                    metadata={"user_id": user_id},
+                    metadata=conv_metadata,
                 )
 
                 final_text = _format_message_for_agent(text, attachments)
-                print(f"[in @ {_now_iso()}] u={user_id}: {final_text[:80]}")
+                origin = (
+                    f"group={chat.get('title') or chat_id}"
+                    if is_group
+                    else "private"
+                )
+                print(
+                    f"[in @ {_now_iso()}] u={user_id} ({origin}): "
+                    f"{final_text[:80]}"
+                )
                 try:
                     reply = await process_turn(
                         client, store, conversation_id, final_text
@@ -335,11 +448,10 @@ async def _run_daemon() -> None:
                     print("[telegram] no reply from agent")
                     continue
 
-                chat_id = (msg.get("chat") or {}).get("id", user_id)
                 sender = TelegramSender(chat_id)
                 ok, err = sender.send(reply)
                 if ok:
-                    print(f"[out] {reply[:80]}")
+                    print(f"[out → {origin}] {reply[:80]}")
                 else:
                     print(f"[telegram send failed] {err}", file=sys.stderr)
 
@@ -370,10 +482,26 @@ def _check() -> int:
     try:
         body = _api_get("getMe")
         bot = body.get("result", {})
-        print(f"✓ bot identity: @{bot.get('username')} ({bot.get('first_name')})")
+        bot_username = bot.get("username") or ""
+        print(f"✓ bot identity: @{bot_username} ({bot.get('first_name')})")
     except Exception as e:  # noqa: BLE001
         print(f"✗ getMe failed: {e}")
         return 1
+
+    allowed_chats = _allowed_chat_ids()
+    if allowed_chats:
+        print(f"✓ TELEGRAM_ALLOWED_CHAT_IDS = {sorted(allowed_chats)} (chat-level filter)")
+    else:
+        print("  TELEGRAM_ALLOWED_CHAT_IDS unset — any chat the bot is in is fair game")
+    triggers = _group_triggers()
+    if bot_username:
+        triggers = list(dict.fromkeys([*triggers, f"@{bot_username}"]))
+    print(f"  group-chat triggers = {triggers}")
+    print(
+        "  (Privacy mode: in Telegram bots in groups only see messages directed\n"
+        "   at them by default — use BotFather → /setprivacy → Disable if you\n"
+        "   want the bot to see all group messages.)"
+    )
 
     print()
     print("All green. Send /start to your bot from a phone signed in as one")

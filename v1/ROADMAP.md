@@ -82,11 +82,13 @@ Each item lists what it adds, why it's not in yet, and what unblocks it.
 - **Unblocks:** Twilio signup → phone number + Account SID + Auth Token. Webhook-based incoming messages (so the daemon needs to expose a public HTTPS endpoint — ngrok for dev, hosted for production). `relay/sms_relay.py` following the existing transport pattern. **Remote-buildable for the code; deployment needs a public URL.**
 - **Effort:** ~hour for code; another hour for deployment story (ngrok or a real host).
 
-### Group chat support in the iMessage relay
-- **What:** Let you @-mention the agent in a family / work group iMessage thread (instead of only watching note-to-self chats), with a whitelist of allowed group chats and explicit @-mention triggering so the agent doesn't respond to every message in a group.
-- **Why deferred:** Loop prevention is trickier in shared chats (your own outgoing messages from any device flow through too); the personality contract around safety is harder when third parties are reading.
-- **Unblocks:** Pure code. **Remote-buildable.**
-- **Effort:** ~hour.
+### ~~Group chat support (iMessage + Telegram)~~ — shipped
+- `IMESSAGE_GROUP_CHATS` + `IMESSAGE_GROUP_TRIGGERS` make the iMessage relay listen to allowlisted group chats in addition to the primary 1:1 mode. Trigger substrings gate responses (default `@agent, hey agent, agent,`); replies route back to the originating chat via AppleScript chat-id send.
+- `TELEGRAM_ALLOWED_CHAT_IDS` + `TELEGRAM_GROUP_TRIGGERS` do the same for Telegram. The bot's own `@<username>` is always accepted as a trigger (resolved via getMe at startup). Group/supergroup chats only fire on trigger match; private chats are unchanged.
+- Loop prevention: iMessage outbound is prefixed with `OUTGOING_MARKER` (zero-width space), and group fetchers filter it out. Telegram bots can't accidentally hear themselves.
+- `python -m relay.imessage_relay --check` lists every group visible in `chat.db` for easy `IMESSAGE_GROUP_CHATS` discovery.
+- `config/personality.md` now has a Group chats section with etiquette: no private inbox contents, terser replies, no spam @-pings. Scheduled briefs / reminders still go to the primary 1:1 destination.
+- **Follow-up (not yet planned):** equivalent channel support in `discord_relay.py` / `slack_relay.py`. Both are DM-only today; the trigger + chat-routing pattern from iMessage/Telegram is the obvious shape.
 
 ### Dedicated agent identity
 - **What:** Give the agent its own Apple ID or Google Voice number so its replies render as inbound (gray bubbles, "from someone else") instead of as your own outgoing messages in a self-chat. Also avoids the iCloud sync quirks that affect note-to-self threads.
