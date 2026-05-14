@@ -39,18 +39,46 @@ async def history(request: Request, q: str | None = Query(None), limit: int = Qu
 
 
 @router.get("/history/{conv_id}", response_class=HTMLResponse)
-async def detail(request: Request, conv_id: str) -> HTMLResponse:
+async def detail(
+    request: Request,
+    conv_id: str,
+    show_third_party: bool = Query(False),
+) -> HTMLResponse:
+    """Render one conversation's full message thread.
+
+    Third-party messages (from other group-chat members) are hidden
+    by default — they have a separate retention cycle and the user
+    usually doesn't want them surfaced in the same view as their own
+    history. Pass `?show_third_party=1` to include them. ROADMAP M3.
+    """
     store = _store()
     conv = store._conn().execute(  # noqa: SLF001
         "SELECT * FROM conversations WHERE id = ?", (conv_id,)
     ).fetchone()
     if not conv:
         raise HTTPException(404, f"conversation not found: {conv_id}")
-    messages = store._conn().execute(  # noqa: SLF001
-        "SELECT * FROM messages WHERE conversation_id = ? ORDER BY id", (conv_id,)
-    ).fetchall()
+
+    if show_third_party:
+        rows = store._conn().execute(  # noqa: SLF001
+            "SELECT * FROM messages WHERE conversation_id = ? ORDER BY id",
+            (conv_id,),
+        ).fetchall()
+    else:
+        rows = store._conn().execute(  # noqa: SLF001
+            "SELECT * FROM messages WHERE conversation_id = ? "
+            "AND (is_third_party = 0 OR is_third_party IS NULL) "
+            "ORDER BY id",
+            (conv_id,),
+        ).fetchall()
+
+    third_party_count = store._conn().execute(  # noqa: SLF001
+        "SELECT COUNT(*) AS n FROM messages "
+        "WHERE conversation_id = ? AND is_third_party = 1",
+        (conv_id,),
+    ).fetchone()["n"]
+
     msgs: list[dict[str, Any]] = []
-    for m in messages:
+    for m in rows:
         d = dict(m)
         if d.get("tool_calls"):
             try:
@@ -60,5 +88,10 @@ async def detail(request: Request, conv_id: str) -> HTMLResponse:
         msgs.append(d)
     return templates.TemplateResponse(
         request, "conversations/detail.html",
-        {"conv": dict(conv), "messages": msgs},
+        {
+            "conv": dict(conv),
+            "messages": msgs,
+            "show_third_party": show_third_party,
+            "third_party_count": int(third_party_count or 0),
+        },
     )

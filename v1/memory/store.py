@@ -29,7 +29,7 @@ import sqlite3
 import sys
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -165,6 +165,15 @@ class MemoryStore:
         }
         if "embedding" not in msg_cols:
             conn.execute("ALTER TABLE messages ADD COLUMN embedding BLOB")
+        # ROADMAP M3 — flag messages authored by someone other than the
+        # principal (third parties in opt-in group chats). Default 0 so
+        # all existing rows keep their semantics (they're either user-
+        # authored or agent-authored). The scheduler runs a daily purge
+        # of third-party rows older than group_chat_retention_days.
+        if "is_third_party" not in msg_cols:
+            conn.execute(
+                "ALTER TABLE messages ADD COLUMN is_third_party INTEGER DEFAULT 0"
+            )
 
         fact_cols = {
             r["name"]
@@ -236,16 +245,28 @@ class MemoryStore:
         role: str,
         content: str,
         tool_calls: list[dict[str, Any]] | None = None,
+        is_third_party: bool = False,
     ) -> None:
+        """Archive one message.
+
+        `is_third_party` is set when the row came from someone other
+        than the principal — currently only relevant for iMessage
+        group chats opted in via IMESSAGE_GROUP_CHATS. Those rows are
+        subject to the group_chat_retention_days purge (ROADMAP M3);
+        user-authored and agent-authored rows are kept indefinitely.
+        """
         cur = self._conn().execute(
-            """INSERT INTO messages (conversation_id, role, content, tool_calls, created_at)
-               VALUES (?, ?, ?, ?, ?)""",
+            """INSERT INTO messages
+                   (conversation_id, role, content, tool_calls,
+                    created_at, is_third_party)
+               VALUES (?, ?, ?, ?, ?, ?)""",
             (
                 conversation_id,
                 role,
                 content,
                 json.dumps(tool_calls) if tool_calls else None,
                 _now(),
+                1 if is_third_party else 0,
             ),
         )
         # Embed the message inline so semantic recall picks it up. If the
@@ -254,6 +275,46 @@ class MemoryStore:
         row_id = cur.lastrowid
         if row_id and content:
             self._embed_and_update(table="messages", row_id=int(row_id), content=content)
+
+    def purge_api_events(self, older_than_days: int) -> int:
+        """Delete `api_events` rows older than `older_than_days`.
+
+        `api_events` is the verbatim audit log of every Claude API
+        payload — user messages, assistant replies, tool calls, tool
+        results, vision requests/responses. The audit-log retention
+        purge is part of ROADMAP H2's fallback path (since SQLCipher
+        wheels aren't yet available for arm64 macOS + Python 3.13).
+
+        Returns the row count deleted. 0 = retention disabled.
+        Conversations / messages / facts are NEVER touched here —
+        those live indefinitely.
+        """
+        if older_than_days <= 0:
+            return 0
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        ).isoformat()
+        cur = self._conn().execute(
+            "DELETE FROM api_events WHERE timestamp < ?",
+            (cutoff,),
+        )
+        return cur.rowcount or 0
+
+    def purge_third_party_messages(self, older_than_days: int) -> int:
+        """Delete is_third_party=1 messages older than `older_than_days`.
+        Returns the row count deleted. Called by the scheduler's daily
+        purge; safe to call ad-hoc.
+        """
+        if older_than_days <= 0:
+            return 0
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        ).isoformat()
+        cur = self._conn().execute(
+            "DELETE FROM messages WHERE is_third_party = 1 AND created_at < ?",
+            (cutoff,),
+        )
+        return cur.rowcount or 0
 
     def search_conversations(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
         """Substring search across message content. Returns conversation summaries.

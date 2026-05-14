@@ -509,6 +509,12 @@ class ChatReader:
             entry["chat_identifier"] = r["chat_identifier"]
             entry["chat_display_name"] = r["chat_display_name"]
             entry["is_group"] = True
+            # ROADMAP M3 — flag messages authored by someone other than
+            # the principal so the archive purge can drop them after
+            # `group_chat_retention_days`. The principal's own messages
+            # (typed from this Mac or another device on their Apple ID)
+            # come through with is_from_me=1 and stay un-flagged.
+            entry["is_third_party"] = not bool(r["is_from_me"])
             result.append(entry)
         return result, max_rowid
 
@@ -747,7 +753,8 @@ async def _run_daemon(
                 print(f"[in @ {_now_iso()}] ({origin}) {msg['text'][:20]}")
                 try:
                     reply = await process_turn(
-                        client, store, conversation_id, msg["text"]
+                        client, store, conversation_id, msg["text"],
+                        is_third_party=bool(msg.get("is_third_party")),
                     )
                 except Exception as e:  # noqa: BLE001
                     print(f"[agent error] {e}", file=sys.stderr)

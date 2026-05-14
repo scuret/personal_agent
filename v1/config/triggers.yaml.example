@@ -117,6 +117,43 @@ scheduled:
       - incomplete_tasks_last_week
       - upcoming_week_calendar
 
+# Group-chat third-party retention (ROADMAP M3)
+# ─────────────────────────────────────────────
+# When you opt iMessage group chats in via IMESSAGE_GROUP_CHATS, the
+# relay archives messages from OTHER group members so the agent can
+# answer questions about the thread. Those messages get tagged at
+# archive time with `is_third_party=1`. The scheduler runs a daily
+# purge that deletes them after `group_chat_retention_days`.
+#
+# Your own messages (typed from any device on your Apple ID) and the
+# agent's replies are NEVER subject to this purge — only content
+# authored by someone else.
+#
+# Set to 0 to keep third-party messages forever (NOT recommended;
+# they're other people's content sitting in your local DB).
+
+group_chat:
+  group_chat_retention_days: 30
+
+# Audit-log retention (ROADMAP H2 fallback)
+# ─────────────────────────────────────────
+# `api_events` is the table where every Claude API turn — user
+# message, assistant reply, tool call, tool result, vision request —
+# gets archived verbatim. It's there so you can audit what the agent
+# saw and produced. It's also the table that accumulates the most
+# personal data over time.
+#
+# Whole-DB encryption (SQLCipher) was the preferred fix but doesn't
+# have precompiled wheels for arm64 macOS + Python 3.13 yet. As a
+# stand-in, the scheduler runs a daily purge that drops api_events
+# rows older than this many days. Conversations, messages, facts,
+# and reminders are never touched here — those stay indefinitely.
+#
+# Set to 0 to disable the purge entirely (keep the audit log forever).
+
+audit_log:
+  audit_log_retention_days: 30
+
 # Overdue task reminders (deferred — set enabled: true if you want hourly nudges)
 overdue_check:
   enabled: false

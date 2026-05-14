@@ -78,6 +78,7 @@ The relay can run in a family / work group chat alongside note-to-self. When you
 - Be terse. Group chats move fast; long bot replies derail conversation. One or two lines is the default; reserve longer answers for when someone explicitly asked.
 - Default to no @-mention pinging in your reply text — your message is already arriving as the bot, so prefixing "@stephen" or similar just spams notifications.
 - The principal triggered you with an @-mention or trigger word. Treat the rest of the group as silent observers, not the audience you're addressing.
+- Group-chat messages from other members ARE archived locally in `data/memory.sqlite` so you can answer questions about a thread. They're flagged as third-party content and purged after `group_chat_retention_days` (default 30) per the security roadmap. If a group member asks how you handle their messages, tell them this honestly; don't dodge.
 
 ## Image attachments
 

@@ -537,14 +537,22 @@ async def process_turn(
     store: MemoryStore,
     conversation_id: str,
     user_text: str,
+    is_third_party: bool = False,
 ) -> str:
     """Submit one user turn, archive + audit everything, return assistant text.
 
     The relay (and scheduler, when it lands) call this directly. It owns the
     whole bookkeeping cycle for a single turn so callers don't have to
     duplicate the archive/audit logic.
+
+    `is_third_party` flows down to `store.append_message` so the row is
+    eligible for the group-chat retention purge (ROADMAP M3). The agent's
+    own reply (role='assistant') is always user-authored — only the
+    incoming `user` message inherits the flag.
     """
-    store.append_message(conversation_id, "user", user_text)
+    store.append_message(
+        conversation_id, "user", user_text, is_third_party=is_third_party,
+    )
     store.log_api_event("user_input", user_text, conversation_id)
 
     await client.query(user_text)
@@ -595,6 +603,7 @@ async def process_turn_stream(
     store: MemoryStore,
     conversation_id: str,
     user_text: str,
+    is_third_party: bool = False,
 ):
     """Same as process_turn but yields text chunks as they arrive.
 
@@ -603,8 +612,13 @@ async def process_turn_stream(
     archive is consistent across transports. The async generator yields
     dicts with `{"event": "text"|"tool"|"done", ...}` payloads — the
     web route translates them to SSE frames.
+
+    `is_third_party` flows down to archive so the row is eligible for
+    the group-chat retention purge (ROADMAP M3).
     """
-    store.append_message(conversation_id, "user", user_text)
+    store.append_message(
+        conversation_id, "user", user_text, is_third_party=is_third_party,
+    )
     store.log_api_event("user_input", user_text, conversation_id)
 
     await client.query(user_text)

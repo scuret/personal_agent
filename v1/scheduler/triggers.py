@@ -1252,6 +1252,109 @@ def _fire_expected_arrivals(
             print(f"[expected_arrivals] send failed: {err}", file=sys.stderr)
 
 
+_THIRD_PARTY_PURGE_LAST_KEY = "third_party_purge_last_run"
+_THIRD_PARTY_PURGE_INTERVAL_HOURS = 24
+_THIRD_PARTY_DEFAULT_RETENTION_DAYS = 30
+
+_API_EVENTS_PURGE_LAST_KEY = "api_events_purge_last_run"
+_API_EVENTS_PURGE_INTERVAL_HOURS = 24
+_API_EVENTS_DEFAULT_RETENTION_DAYS = 30
+
+
+def _fire_api_events_purge(
+    store: MemoryStore, config: dict[str, Any], now: datetime
+) -> None:
+    """Daily-throttled purge of api_events rows older than
+    `audit_log_retention_days` (default 30, from triggers.yaml).
+
+    ROADMAP H2 fallback. SQLCipher whole-DB encryption was the
+    preferred fix but doesn't have precompiled wheels for arm64
+    macOS + Python 3.13 yet. This purge limits the blast radius
+    of a stolen-laptop event by trimming the verbatim Claude
+    payload log after a fixed retention window. Conversations,
+    facts, messages, and reminders are NOT touched here — only
+    the audit log.
+
+    Set the retention to 0 in triggers.yaml to disable the purge
+    (keep the audit log forever).
+    """
+    cfg = (config.get("audit_log") or {})
+    retention_days = cfg.get(
+        "audit_log_retention_days", _API_EVENTS_DEFAULT_RETENTION_DAYS
+    )
+    try:
+        retention_days = int(retention_days)
+    except (TypeError, ValueError):
+        retention_days = _API_EVENTS_DEFAULT_RETENTION_DAYS
+    if retention_days <= 0:
+        return
+
+    last_run_str = store.get_state(_API_EVENTS_PURGE_LAST_KEY)
+    if last_run_str:
+        try:
+            last_run = datetime.fromisoformat(last_run_str)
+            if (now - last_run).total_seconds() < _API_EVENTS_PURGE_INTERVAL_HOURS * 3600:
+                return
+        except ValueError:
+            pass
+
+    try:
+        deleted = store.purge_api_events(older_than_days=retention_days)
+    except Exception as e:  # noqa: BLE001
+        print(f"[audit_log_purge] failed: {e}", file=sys.stderr)
+        return
+
+    store.set_state(_API_EVENTS_PURGE_LAST_KEY, now.isoformat())
+    if deleted:
+        print(
+            f"[audit_log_purge] removed {deleted} api_events row(s) "
+            f"older than {retention_days} day(s)"
+        )
+
+
+def _fire_third_party_purge(
+    store: MemoryStore, config: dict[str, Any], now: datetime
+) -> None:
+    """Daily-throttled purge of third-party group-chat messages older
+    than `group_chat_retention_days` (default 30, from triggers.yaml).
+
+    Set the retention to 0 in triggers.yaml to disable the purge
+    entirely (keep everything forever). ROADMAP M3.
+    """
+    cfg = (config.get("group_chat") or {})
+    retention_days = cfg.get(
+        "group_chat_retention_days", _THIRD_PARTY_DEFAULT_RETENTION_DAYS
+    )
+    try:
+        retention_days = int(retention_days)
+    except (TypeError, ValueError):
+        retention_days = _THIRD_PARTY_DEFAULT_RETENTION_DAYS
+    if retention_days <= 0:
+        return  # explicitly disabled
+
+    last_run_str = store.get_state(_THIRD_PARTY_PURGE_LAST_KEY)
+    if last_run_str:
+        try:
+            last_run = datetime.fromisoformat(last_run_str)
+            if (now - last_run).total_seconds() < _THIRD_PARTY_PURGE_INTERVAL_HOURS * 3600:
+                return
+        except ValueError:
+            pass
+
+    try:
+        deleted = store.purge_third_party_messages(older_than_days=retention_days)
+    except Exception as e:  # noqa: BLE001 — non-fatal
+        print(f"[third_party_purge] failed: {e}", file=sys.stderr)
+        return
+
+    store.set_state(_THIRD_PARTY_PURGE_LAST_KEY, now.isoformat())
+    if deleted:
+        print(
+            f"[third_party_purge] removed {deleted} group-chat message(s) "
+            f"older than {retention_days} day(s)"
+        )
+
+
 def _fire_due_reminders(store: MemoryStore) -> None:
     """Send any pending reminder whose fire_at has passed.
 
@@ -1933,6 +2036,22 @@ async def _run_daemon() -> None:
             _fire_expected_arrivals(store, config, now)
         except Exception as e:  # noqa: BLE001
             print(f"[expected_arrivals error] {e}", file=sys.stderr)
+
+        # Third-party purge (ROADMAP M3) — daily-throttled. Cheap
+        # no-op on every tick because the state-key check returns
+        # immediately when we ran less than 24h ago.
+        try:
+            _fire_third_party_purge(store, config, now)
+        except Exception as e:  # noqa: BLE001
+            print(f"[third_party_purge error] {e}", file=sys.stderr)
+
+        # Audit-log purge (ROADMAP H2 fallback) — daily-throttled
+        # cleanup of api_events rows older than the configured
+        # retention. Conversations / messages / facts are untouched.
+        try:
+            _fire_api_events_purge(store, config, now)
+        except Exception as e:  # noqa: BLE001
+            print(f"[audit_log_purge error] {e}", file=sys.stderr)
 
         # Re-read config so triggers.yaml edits take effect within ~30s.
         config = _load_config()

@@ -16,16 +16,31 @@
     {% if conv.metadata %}
     <pre class="mt-2 text-xs text-zinc-500 bg-zinc-900 rounded p-2 overflow-x-auto">{{ conv.metadata }}</pre>
     {% endif %}
+    {% if third_party_count > 0 %}
+    <div class="mt-3 px-3 py-2 rounded border border-amber-900 bg-amber-950/30 text-xs text-amber-100 flex items-baseline gap-3">
+        <span>
+            {{ third_party_count }} message{{ 's' if third_party_count != 1 else '' }}
+            in this conversation {{ 'were' if third_party_count != 1 else 'was' }} authored by other group-chat members.
+            {% if not show_third_party %}Hidden by default.{% endif %}
+        </span>
+        {% if show_third_party %}
+        <a href="?show_third_party=0" class="underline hover:text-amber-50">hide</a>
+        {% else %}
+        <a href="?show_third_party=1" class="underline hover:text-amber-50">show them</a>
+        {% endif %}
+    </div>
+    {% endif %}
 </header>
 
 <div class="space-y-3">
     {% for m in messages %}
     {% set is_user = m.role == 'user' %}
-    <div class="rounded-lg border {{ 'border-sky-900 bg-sky-950/30' if is_user else 'border-zinc-800 bg-zinc-900/40' }} p-4">
+    {% set is_third = m.is_third_party == 1 %}
+    <div class="rounded-lg border {{ 'border-amber-900 bg-amber-950/20' if is_third else ('border-sky-900 bg-sky-950/30' if is_user else 'border-zinc-800 bg-zinc-900/40') }} p-4">
         <div class="flex items-baseline justify-between mb-2">
             <span class="text-xs uppercase tracking-wider font-medium
-                         {{ 'text-sky-300' if is_user else 'text-zinc-400' }}">
-                {{ m.role }}
+                         {{ 'text-amber-300' if is_third else ('text-sky-300' if is_user else 'text-zinc-400') }}">
+                {{ m.role }}{% if is_third %} · group member{% endif %}
             </span>
             <span class="text-xs mono text-zinc-500">{{ m.created_at[:19] }}</span>
         </div>

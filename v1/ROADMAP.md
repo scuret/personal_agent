@@ -173,13 +173,13 @@ warning scaffolding.
 
 Batch 2 (shipped 2026-05-14): H5, M4, M5.
 
+Batch 3 (shipped 2026-05-14): H2 (fallback path — audit-log
+retention purge; SQLCipher path deferred to future), M3.
+
 Remaining work:
 
-- **H2** — encrypt the audit-log database (SQLCipher preferred,
-  30-day `api_events` retention purge as fallback).
 - **H4** — `git filter-repo` to scrub `config/triggers.yaml` from
-  history (also blocks public push; overlaps with going-public #1).
-- **M3** — group-chat third-party retention policy.
+  history. Blocks public push; overlaps with going-public #1.
 
 #### ~~H1. File-permission hardening on tokens, DB, and logs~~ — shipped
 - Every token cache writer (`mcp_servers/dropbox_auth.py`,
@@ -198,19 +198,29 @@ Remaining work:
   `.env`, `config/credentials.json`, `config/triggers.yaml`, plus
   every SQLite / pickle / token / log file under `data/`.
 
-#### H2. Encrypt the audit-log database (preferred) or 30-day fallback
-- **Risk:** `data/memory.sqlite` is a plaintext SQLite file holding
-  every conversation, every fact extracted, and a verbatim copy of
-  every Claude API payload in `api_events` (541 rows today, growing).
-- **Fix (preferred):** Migrate to SQLCipher with a passphrase stored
-  in the macOS Keychain. Existing rows are preserved; encryption is
-  transparent at the DB layer.
-- **Fallback:** If SQLCipher integration is fragile or too disruptive,
-  add 30-day retention purge for `api_events` only. Preserve
-  `messages`, `facts`, and `conversations` indefinitely so the
-  conversation history and memory aren't lost.
-- **Files:** `memory/store.py`, new `memory/encryption.py`, new
-  `tools/migrate_db_encryption.py`.
+#### ~~H2. Audit-log retention~~ — shipped (fallback path)
+- SQLCipher whole-DB encryption was the preferred fix but doesn't
+  have precompiled wheels for arm64 macOS + Python 3.13 yet
+  (`sqlcipher3-binary` v0.5.3 only ships cp36–cp312 wheels;
+  building from source needs `brew install sqlcipher` first, a
+  per-machine prereq we don't want to push on forkers). Per the
+  user's pre-authorized fallback, shipped the 30-day `api_events`
+  retention purge instead.
+- New `MemoryStore.purge_api_events(older_than_days)` deletes audit-
+  log rows older than the threshold. Conversations / messages /
+  facts / reminders are untouched.
+- New `_fire_api_events_purge` runs daily (via the same throttle
+  pattern as `_fire_third_party_purge`). Configured via
+  `audit_log.audit_log_retention_days` in `triggers.yaml` (default
+  30; set to 0 to disable).
+- Combined with H1's `0o600` perms + FileVault, this keeps the
+  blast radius of a stolen-laptop event bounded to the last 30 days
+  of Claude payloads instead of the indefinite-growth status quo.
+- **Future (not planned):** real DB encryption via SQLCipher once
+  upstream ships arm64-Python-3.13 wheels, OR migrating the
+  `api_events` payload column to per-row symmetric encryption with
+  a Keychain-stored key. Tracked here for visibility; no
+  implementation date.
 
 #### ~~H3. Hard-bind the web UI to 127.0.0.1~~ — shipped
 - `web/app.py` now ignores any `WEB_HOST` env override that isn't
@@ -278,21 +288,27 @@ Remaining work:
   rotation pass). Reaffirmed here and the log-name list now covers
   the web + log-rotation daemons in addition to relay + scheduler.
 
-#### M3. Group-chat third-party retention policy
-- **Risk:** When `IMESSAGE_GROUP_CHATS` is set, the relay archives
-  messages from OTHER people in those groups indefinitely. Their
-  content gets embedded for vector search, stored in `messages`, and
-  is indistinguishable from the user's own data in the archive. No
-  opt-in, no purge, no consent model.
-- **Fix:** (a) Tag third-party messages with
-  `metadata.is_third_party=true` at archive time. (b) Add
-  `group_chat_retention_days` (default 30) with a scheduler purge
-  job. (c) Web UI history filters third-party messages by default
-  with a toggle. (d) Document in `personality.md` Group chats
-  section so the agent can disclose it if asked in-group.
-- **Files:** `relay/imessage_relay.py:481-528`, `memory/store.py`,
-  `scheduler/triggers.py`, `web/routes/conversations.py`,
-  `config/personality.md`.
+#### ~~M3. Group-chat third-party retention policy~~ — shipped
+- `messages` schema gained an `is_third_party INTEGER DEFAULT 0`
+  column via the existing defensive-migration pattern.
+- `MemoryStore.append_message` accepts `is_third_party: bool`.
+  `process_turn` / `process_turn_stream` pass it through so any
+  transport can tag the row.
+- iMessage relay's `_fetch_group` sets the flag based on chat.db's
+  `is_from_me`: messages from other group members → tagged.
+  The principal's own group messages (from any device on their
+  Apple ID) stay un-flagged.
+- New `MemoryStore.purge_third_party_messages(older_than_days)` +
+  `_fire_third_party_purge` scheduler fire (daily-throttled).
+  Configured via `group_chat.group_chat_retention_days` in
+  `triggers.yaml` (default 30; set to 0 to keep forever).
+- Web UI `/history/<conv_id>` hides third-party rows by default
+  with a banner showing the hidden count and a "show them" toggle
+  (`?show_third_party=1`). When shown, third-party messages render
+  with amber borders + a "group member" role label so they're
+  visually distinct from the principal's own content.
+- `personality.md` Group chats section tells the agent to disclose
+  the retention policy honestly if a group member asks.
 
 #### ~~M4. Email-triage data flow disclosure + local-only opt-out~~ — shipped
 - `EMAIL_TRIAGE_LOCAL_ONLY=true` env opt-out. When set, the

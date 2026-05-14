@@ -149,8 +149,22 @@ section in ROADMAP.md.
   size-capped via `UPLOADS_TOTAL_CAP_MB` (default 500 MB) with
   oldest-first cleanup once the cap is exceeded.
 
-**Still active:** database encryption (H2), git-history scrub for
-`triggers.yaml` (H4), group-chat third-party retention (M3).
+**Shipped in batch 3 (2026-05-14):**
+- **H2** — `api_events` (the verbatim Claude API audit log) is now
+  purged daily by the scheduler once rows are older than
+  `audit_log.audit_log_retention_days` (default 30, configured in
+  `triggers.yaml`). Conversations / messages / facts / reminders are
+  never touched — only the audit-log table. SQLCipher whole-DB
+  encryption was the preferred fix but doesn't have arm64-macOS-
+  Python-3.13 wheels yet; the retention purge ships in its place.
+- **M3** — group-chat messages from other people now get tagged
+  `is_third_party=1` at archive time and purged after
+  `group_chat.group_chat_retention_days` (default 30). The web UI's
+  history page hides third-party rows by default with a "show them"
+  toggle; when shown they get an amber "group member" label so
+  they're visually distinct from your own content.
+
+**Still active:** git-history scrub for `triggers.yaml` (H4).
 
 The deeper "key rotation + handling discipline" guidance lives in the
 [Privacy + secrets](#privacy--secrets) section further down.
