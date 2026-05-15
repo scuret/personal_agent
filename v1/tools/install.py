@@ -524,15 +524,17 @@ def step_relay(env: dict[str, str]) -> None:
     print("  imessage  — macOS only. Polls chat.db + sends via AppleScript.")
     print("              Requires Full Disk Access + Automation permissions.")
     print("  telegram  — Cross-platform. Bot via @BotFather, no Mac needed.")
-    print("  discord   — Discord bot, DMs only. Cross-platform.")
-    print("  slack     — Slack bot in a workspace, DMs only. Cross-platform.")
+    print("  discord   — Discord bot, DMs + opt-in server channels.")
+    print("  slack     — Slack bot in a workspace, DMs + opt-in channels.")
+    print("  sms       — Twilio-based SMS. Universal reach but text-only and")
+    print("              needs a public webhook URL (ngrok or reverse proxy).")
     print()
 
     current = env.get("RELAY_TRANSPORT", "imessage")
     transport = _ask(
-        "RELAY_TRANSPORT [imessage/telegram/discord/slack]:", default=current
+        "RELAY_TRANSPORT [imessage/telegram/discord/slack/sms]:", default=current
     )
-    valid = ("imessage", "telegram", "discord", "slack")
+    valid = ("imessage", "telegram", "discord", "slack", "sms")
     if transport not in valid:
         _warn(f"unknown transport {transport!r}, keeping {current}")
         transport = current
@@ -546,6 +548,8 @@ def step_relay(env: dict[str, str]) -> None:
         _step_discord_config(env)
     elif transport == "slack":
         _step_slack_config(env)
+    elif transport == "sms":
+        _step_sms_config(env)
 
 
 def _step_imessage_config(env: dict[str, str]) -> None:
@@ -708,6 +712,23 @@ def _step_discord_config(env: dict[str, str]) -> None:
     )
 
     print()
+    print("Optional: server-channel support (in addition to DMs).")
+    print("Set DISCORD_ALLOWED_CHANNEL_IDS to a comma-separated list of")
+    print("channel IDs (Developer Mode → right-click channel → Copy ID).")
+    print("The bot only responds in those channels when it's @-mentioned")
+    print("or when a message contains a DISCORD_GROUP_TRIGGERS substring.")
+    print("Leave empty for DM-only behavior.")
+    env["DISCORD_ALLOWED_CHANNEL_IDS"] = _ask(
+        "DISCORD_ALLOWED_CHANNEL_IDS (comma-sep, empty = DM-only):",
+        default=env.get("DISCORD_ALLOWED_CHANNEL_IDS", ""),
+    )
+    if env["DISCORD_ALLOWED_CHANNEL_IDS"].strip():
+        env["DISCORD_GROUP_TRIGGERS"] = _ask(
+            "DISCORD_GROUP_TRIGGERS (comma-sep, empty = defaults):",
+            default=env.get("DISCORD_GROUP_TRIGGERS", ""),
+        )
+
+    print()
     print("After install, verify with:  python -m relay.discord_relay --check")
 
 
@@ -758,7 +779,83 @@ def _step_slack_config(env: dict[str, str]) -> None:
     )
 
     print()
+    print("Optional: channel / group / mpim support (in addition to DMs).")
+    print("Set SLACK_ALLOWED_CHANNEL_IDS to a comma-separated list of")
+    print("channel IDs (Cxxxxx for public, Gxxxxx for private). The bot")
+    print("only responds when @-mentioned or matched by a trigger.")
+    print("IMPORTANT: also add message.channels / message.groups /")
+    print("message.mpim to the app's Event Subscriptions, otherwise the")
+    print("bot can't see channel messages. Leave empty for DM-only.")
+    env["SLACK_ALLOWED_CHANNEL_IDS"] = _ask(
+        "SLACK_ALLOWED_CHANNEL_IDS (comma-sep, empty = DM-only):",
+        default=env.get("SLACK_ALLOWED_CHANNEL_IDS", ""),
+    )
+    if env["SLACK_ALLOWED_CHANNEL_IDS"].strip():
+        env["SLACK_GROUP_TRIGGERS"] = _ask(
+            "SLACK_GROUP_TRIGGERS (comma-sep, empty = defaults):",
+            default=env.get("SLACK_GROUP_TRIGGERS", ""),
+        )
+
+    print()
     print("After install, verify with:  python -m relay.slack_relay --check")
+
+
+def _step_sms_config(env: dict[str, str]) -> None:
+    print()
+    print("─ SMS via Twilio config ─")
+    print("Fifth transport — bidirectional SMS via Twilio. Text-only")
+    print("(no image attachments / vision flow on inbound).")
+    print()
+    print("Cost: ~$1/mo for the phone number + ~$0.008 per message.")
+    print()
+    print("Step 1: twilio.com → sign up, verify, buy an SMS-capable")
+    print("phone number. Then Console → Account → API keys & tokens —")
+    print("copy the Account SID and the Auth Token.")
+    env["TWILIO_ACCOUNT_SID"] = _ask(
+        "TWILIO_ACCOUNT_SID:", default=env.get("TWILIO_ACCOUNT_SID", "")
+    )
+    env["TWILIO_AUTH_TOKEN"] = _ask(
+        "TWILIO_AUTH_TOKEN:", default=env.get("TWILIO_AUTH_TOKEN", "")
+    )
+
+    print()
+    print("Step 2: your Twilio phone number in E.164 (+15551234567).")
+    env["TWILIO_FROM_NUMBER"] = _ask(
+        "TWILIO_FROM_NUMBER:", default=env.get("TWILIO_FROM_NUMBER", "")
+    )
+
+    print()
+    print("Step 3: phone numbers that are allowed to text the bot.")
+    print("Comma-separated, E.164 (+15551234567). The relay drops every")
+    print("other inbound message — set this to at least your own phone.")
+    env["SMS_ALLOWED_NUMBERS"] = _ask(
+        "SMS_ALLOWED_NUMBERS:", default=env.get("SMS_ALLOWED_NUMBERS", "")
+    )
+
+    print()
+    print("Optional: webhook port (default 8781). Bound to 127.0.0.1.")
+    env["SMS_WEBHOOK_PORT"] = _ask(
+        "SMS_WEBHOOK_PORT:", default=env.get("SMS_WEBHOOK_PORT", "8781")
+    )
+
+    print()
+    print("Optional: recipient for scheduled briefs / reminders.")
+    print("Defaults to the first number in SMS_ALLOWED_NUMBERS.")
+    env["SMS_BRIEF_RECIPIENT"] = _ask(
+        "SMS_BRIEF_RECIPIENT:", default=env.get("SMS_BRIEF_RECIPIENT", "")
+    )
+
+    print()
+    print("Step 4 (USER ACTION REQUIRED AFTER INSTALL):")
+    port = env.get("SMS_WEBHOOK_PORT", "8781")
+    print(f"  Twilio needs a public URL to deliver inbound messages to.")
+    print(f"  In a separate terminal:  ngrok http {port}")
+    print(f"  Copy the https://...ngrok-free.app URL. Then in the Twilio")
+    print(f"  Console → Phone Numbers → your number → Messaging:")
+    print(f"  set 'A MESSAGE COMES IN' to <ngrok-url>/sms/webhook (POST).")
+    print(f"  Save. Text your Twilio number from one of the allowed phones.")
+    print()
+    print("After install, verify with:  python -m relay.sms_relay --check")
 
 
 # ─── Triggers (email watch + scheduler config) ─────────────────────────────

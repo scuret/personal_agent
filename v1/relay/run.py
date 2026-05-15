@@ -22,6 +22,7 @@ from relay.sender import (  # noqa: E402
     TRANSPORT_DISCORD,
     TRANSPORT_IMESSAGE,
     TRANSPORT_SLACK,
+    TRANSPORT_SMS,
     TRANSPORT_TELEGRAM,
     current_transport,
 )
@@ -32,27 +33,32 @@ def main() -> None:
     if transport == TRANSPORT_IMESSAGE:
         from relay.imessage_relay import main as run_imessage
 
-        print(f"[relay.run] dispatching to imessage transport")
+        print("[relay.run] dispatching to imessage transport")
         run_imessage()
     elif transport == TRANSPORT_TELEGRAM:
         from relay.telegram_relay import main as run_telegram
 
-        print(f"[relay.run] dispatching to telegram transport")
+        print("[relay.run] dispatching to telegram transport")
         run_telegram()
     elif transport == TRANSPORT_DISCORD:
         from relay.discord_relay import main as run_discord
 
-        print(f"[relay.run] dispatching to discord transport")
+        print("[relay.run] dispatching to discord transport")
         run_discord()
     elif transport == TRANSPORT_SLACK:
         from relay.slack_relay import main as run_slack
 
-        print(f"[relay.run] dispatching to slack transport")
+        print("[relay.run] dispatching to slack transport")
         run_slack()
+    elif transport == TRANSPORT_SMS:
+        from relay.sms_relay import main as run_sms
+
+        print("[relay.run] dispatching to sms transport")
+        run_sms()
     else:
         print(
             f"error: unknown RELAY_TRANSPORT={transport!r} "
-            "(expected 'imessage', 'telegram', 'discord', or 'slack')",
+            "(expected 'imessage', 'telegram', 'discord', 'slack', or 'sms')",
             file=sys.stderr,
         )
         sys.exit(1)

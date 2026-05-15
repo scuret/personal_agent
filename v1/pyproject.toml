@@ -65,6 +65,11 @@ dependencies = [
     # password (and any future user secrets that shouldn't live in
     # plaintext .env). On macOS this maps to the Login Keychain.
     "keyring>=25.0",
+
+    # SMS via Twilio transport — bidirectional SMS. The bot receives
+    # inbound messages via a Twilio webhook (relay/sms_relay.py hosts
+    # the listener) and sends replies via the Twilio REST API.
+    "twilio>=9.0",
 ]
 
 [project.optional-dependencies]

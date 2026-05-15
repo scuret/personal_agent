@@ -24,10 +24,11 @@ Setup (web-only, no Mac required):
      a server with you). Say hi.
   6. Set RELAY_TRANSPORT=discord in .env and restart the relay daemon.
 
-Why Discord-bot DMs over channel posts: same identity story as the
-Telegram bot — the agent shows up as its own conversation, not a
-channel @ mention. Channel support overlaps with the planned
-group-chat work in the iMessage relay and is deferred to that.
+DMs are the default surface. Channel / server-room support is
+additive — set `DISCORD_ALLOWED_CHANNEL_IDS` to opt specific server
+channels in, and the bot will respond when a message in those
+channels @-mentions the bot or matches `DISCORD_GROUP_TRIGGERS`.
+DMs from allowlisted users keep working unchanged.
 
 Outbound (scheduler-driven briefs / reminders) uses Discord's REST
 API directly via DiscordSender rather than spinning up the full
@@ -83,6 +84,49 @@ def _allowed_user_ids() -> set[int]:
         except ValueError:
             print(f"[discord] ignoring non-integer user id {chunk!r}", file=sys.stderr)
     return out
+
+
+def _allowed_channel_ids() -> set[int]:
+    """Server text-channel IDs the bot is allowed to listen in.
+
+    Channel IDs are the long numeric strings you copy from the
+    Discord client (Developer Mode → right-click a channel → Copy
+    Channel ID). Empty / unset = no server-channel listening; only
+    DMs from DISCORD_ALLOWED_USER_IDS get a response.
+    """
+    raw = os.environ.get("DISCORD_ALLOWED_CHANNEL_IDS", "").strip()
+    if not raw:
+        return set()
+    out: set[int] = set()
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            out.add(int(chunk))
+        except ValueError:
+            print(f"[discord] ignoring non-integer channel id {chunk!r}", file=sys.stderr)
+    return out
+
+
+# Fallback group-trigger substrings used when DISCORD_GROUP_TRIGGERS is
+# empty. The bot's own `<@id>` mention is always accepted (resolved at
+# startup once we know our user id). These extend the set.
+DEFAULT_GROUP_TRIGGERS = ("@agent", "hey agent", "agent,")
+
+
+def _group_triggers() -> list[str]:
+    raw = os.environ.get("DISCORD_GROUP_TRIGGERS", "").strip()
+    if not raw:
+        return [t.lower() for t in DEFAULT_GROUP_TRIGGERS]
+    return [chunk.strip().lower() for chunk in raw.split(",") if chunk.strip()]
+
+
+def _matches_group_trigger(text: str, triggers: list[str]) -> bool:
+    if not text:
+        return False
+    lo = text.lower()
+    return any(t in lo for t in triggers)
 
 
 def _resolve_discord_recipient() -> int:
@@ -240,8 +284,10 @@ async def _run_daemon() -> None:
     import discord  # noqa: E402
 
     store = MemoryStore()
-    allowed = _allowed_user_ids()
-    if not allowed:
+    allowed_users = _allowed_user_ids()
+    allowed_channels = _allowed_channel_ids()
+    group_triggers = _group_triggers()
+    if not allowed_users:
         print(
             "WARNING: DISCORD_ALLOWED_USER_IDS is empty — bot will ignore everyone. "
             "Add at least your own Discord user id (Developer Mode → right-click "
@@ -252,6 +298,11 @@ async def _run_daemon() -> None:
     intents = discord.Intents.default()
     intents.message_content = True  # privileged — must be enabled in portal
     intents.dm_messages = True
+    # When server channels are opted in, the bot needs guild_messages
+    # too. Cheap to enable always — discord.py reads the intent bit on
+    # connect and adjusts subscriptions.
+    if allowed_channels:
+        intents.guild_messages = True
 
     client = discord.Client(intents=intents)
     options = build_options(store)
@@ -260,26 +311,57 @@ async def _run_daemon() -> None:
 
     @client.event
     async def on_ready() -> None:
+        scope = f"users: {sorted(allowed_users)}"
+        if allowed_channels:
+            scope += f", channels: {sorted(allowed_channels)} (triggers: {group_triggers + [f'<@{client.user.id}>']})"
+        else:
+            scope += " (no channel-level allowlist)"
         print(
-            f"[discord] relay started — logged in as {client.user} "
-            f"(allowed users: {sorted(allowed)})"
+            f"[discord] relay started — logged in as {client.user} ({scope})"
         )
 
     @client.event
     async def on_message(message) -> None:
-        # Ignore self + non-DM channels for v1 (group/channel support
-        # is the planned "Group chat in iMessage relay" item).
+        # Ignore the bot's own messages.
         if message.author.id == (client.user.id if client.user else 0):
             return
-        if message.channel.type != discord.ChannelType.private:
-            return
+
         user_id = message.author.id
-        if user_id not in allowed:
-            print(
-                f"[discord] ignoring DM from unallowed user "
-                f"id={user_id} ({message.author.name})"
-            )
-            return
+        channel_type = message.channel.type
+        is_dm = channel_type == discord.ChannelType.private
+
+        if is_dm:
+            # DM path — unchanged behavior, gated by user allowlist.
+            if user_id not in allowed_users:
+                print(
+                    f"[discord] ignoring DM from unallowed user "
+                    f"id={user_id} ({message.author.name})"
+                )
+                return
+            origin_label = "dm"
+        else:
+            # Server channel path — gated by channel allowlist AND a
+            # trigger match (so the bot doesn't respond to every line
+            # in a chat room). Threads use their own channel id; if
+            # you want to opt a thread in, add its id explicitly.
+            if not allowed_channels or message.channel.id not in allowed_channels:
+                return
+            if user_id not in allowed_users:
+                print(
+                    f"[discord] ignoring channel message from unallowed user "
+                    f"id={user_id} ({message.author.name}) in channel "
+                    f"{message.channel.id}"
+                )
+                return
+            text_for_trigger = (message.content or "").lower()
+            # Always-on trigger: an explicit @-mention of the bot.
+            bot_mention = f"<@{client.user.id}>".lower() if client.user else ""
+            mentioned = bot_mention and bot_mention in text_for_trigger
+            if not mentioned and not _matches_group_trigger(
+                text_for_trigger, group_triggers
+            ):
+                return
+            origin_label = f"channel={message.channel.id}"
 
         # Pull text + image attachments.
         text = message.content or ""
@@ -295,14 +377,21 @@ async def _run_daemon() -> None:
         if not text.strip() and not attachments:
             return
 
+        # Conversation metadata distinguishes DM vs channel for the
+        # archive + ROADMAP M3 third-party retention rules.
+        conv_metadata: dict[str, Any] = {"user_id": user_id}
+        if not is_dm:
+            conv_metadata["channel_id"] = message.channel.id
+            conv_metadata["channel_name"] = getattr(message.channel, "name", None)
+            conv_metadata["is_group"] = True
         conversation_id = store.resume_or_open_conversation(
             source=CONVERSATION_SOURCE,
             gap_threshold_hours=CONVERSATION_GAP_HOURS,
-            metadata={"user_id": user_id},
+            metadata=conv_metadata,
         )
 
         final_text = _format_message_for_agent(text, attachments)
-        print(f"[in @ {_now_iso()}] u={user_id}: {final_text[:20]}")
+        print(f"[in @ {_now_iso()}] u={user_id} ({origin_label}): {final_text[:20]}")
         try:
             reply = await process_turn(sdk_client, store, conversation_id, final_text)
         except Exception as e:  # noqa: BLE001
@@ -313,13 +402,12 @@ async def _run_daemon() -> None:
             print("[discord] no reply from agent")
             return
 
-        # Reply directly via the message's channel (faster than DiscordSender,
-        # which is for scheduler-driven sends where we don't have a channel
-        # handle).
+        # Reply directly via the message's channel (works for both
+        # DMs and server channels — discord.py abstracts the difference).
         try:
             for chunk in _split_for_discord(reply):
                 await message.channel.send(chunk)
-            print(f"[out] {reply[:20]}")
+            print(f"[out → {origin_label}] {reply[:20]}")
         except Exception as e:  # noqa: BLE001
             print(f"[discord send failed] {e}", file=sys.stderr)
 
@@ -349,11 +437,19 @@ def _check() -> int:
         return 1
     print(f"✓ DISCORD_BOT_TOKEN set (token: {token[:8]}…)")
 
-    allowed = _allowed_user_ids()
-    if not allowed:
+    allowed_users = _allowed_user_ids()
+    if not allowed_users:
         print("✗ DISCORD_ALLOWED_USER_IDS empty — bot will ignore everyone")
         return 1
-    print(f"✓ DISCORD_ALLOWED_USER_IDS = {sorted(allowed)}")
+    print(f"✓ DISCORD_ALLOWED_USER_IDS = {sorted(allowed_users)}")
+
+    allowed_channels = _allowed_channel_ids()
+    if allowed_channels:
+        print(f"✓ DISCORD_ALLOWED_CHANNEL_IDS = {sorted(allowed_channels)} (channel-level filter)")
+    else:
+        print("  DISCORD_ALLOWED_CHANNEL_IDS unset — bot listens to DMs only")
+    triggers = _group_triggers()
+    print(f"  group-chat triggers = {triggers} (bot's @-mention always also accepted)")
 
     try:
         r = requests.get(
@@ -361,7 +457,10 @@ def _check() -> int:
         )
         r.raise_for_status()
         me = r.json()
-        print(f"✓ bot identity: {me.get('username')}#{me.get('discriminator')} ({me.get('id')})")
+        bot_id = me.get("id")
+        print(f"✓ bot identity: {me.get('username')}#{me.get('discriminator')} ({bot_id})")
+        if allowed_channels:
+            print(f"  channel @-mention format = <@{bot_id}>")
     except Exception as e:  # noqa: BLE001
         print(f"✗ /users/@me failed: {e}")
         return 1
@@ -370,6 +469,9 @@ def _check() -> int:
     print("All green. Make sure you've enabled the Message Content Intent")
     print("in the Discord Developer Portal, and that the bot has been")
     print("invited to a server you share. Then DM the bot to start chatting.")
+    if allowed_channels:
+        print("Channel mode: invite the bot to the configured channels and")
+        print("@-mention it (or use a trigger phrase) to summon it.")
     return 0
 
 

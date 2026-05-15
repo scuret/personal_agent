@@ -190,19 +190,22 @@ Set `RELAY_TRANSPORT` in `.env` to one of:
 
 - **`imessage`** — macOS-only. Polls `~/Library/Messages/chat.db` and sends via AppleScript. Requires Full Disk Access + Automation permissions for the daemon. Native iPhone integration; the agent appears as a "Note to Self" thread (or a regular contact in `contact` mode).
 - **`telegram`** — Cross-platform. The agent runs as a bot you create via `@BotFather`; only allowlisted Telegram user IDs can talk to it. Works from any Mac, Linux, or Windows host with Python — no iMessage / chat.db dependency, and no iOS Focus / DND quirks.
-- **`discord`** — DM with a bot you create via the Discord Developer Portal. Allowlisted by Discord user ID. Image attachments route through the vision sub-agent.
-- **`slack`** — Socket Mode app (no public URL needed). DM-only, allowlisted by Slack user ID. Image attachments via vision.
+- **`discord`** — DM + opt-in server channel support via a bot you create in the Discord Developer Portal. Allowlisted by Discord user ID for DMs; allowlisted by channel ID for server channels (with @-mention or trigger-phrase gating). Image attachments route through the vision sub-agent.
+- **`slack`** — Socket Mode app (no public URL needed). DM + opt-in channel / group / mpim support, allowlisted by Slack user ID and channel ID. Image attachments via vision.
+- **`sms`** — Text-only via Twilio. Universal reach (any phone, any carrier) but no image attachments. Bidirectional via a Twilio webhook the relay hosts at `127.0.0.1:8781/sms/webhook`; needs a public URL (ngrok for dev, reverse proxy for prod) for Twilio to deliver inbound messages. ~$1/mo for the phone number + ~$0.008 per message.
 
 Switch transports any time by editing `.env` and restarting the relay (`launchctl kickstart -k gui/$(id -u)/com.personal-agent.relay`). Only one transport runs at a time per relay process. The interactive installer (`./install.sh`) walks you through choosing one.
 
-### Group chats (iMessage + Telegram)
+### Group chats (iMessage, Telegram, Discord, Slack)
 
-Both the iMessage and Telegram relays can additionally listen in **group chats** so the agent can be summoned in family, work, or club threads — not just note-to-self. Group support is opt-in and additive: it runs alongside the primary 1:1 mode and never displaces it.
+All four chat transports can additionally listen in **group chats / server channels** so the agent can be summoned in family, work, or club threads — not just 1:1. Group support is opt-in and additive: it runs alongside the primary DM mode and never displaces it.
 
 - **iMessage:** set `IMESSAGE_GROUP_CHATS` to a comma-separated list of either `chat_identifier` values (like `chat657054710918744555`) or `display_name` values (like `Family`). Run `python -m relay.imessage_relay --check` to print every group visible in your `chat.db` so you can copy the right value. Trigger phrases default to `@agent, hey agent, agent,` — override with `IMESSAGE_GROUP_TRIGGERS`.
 - **Telegram:** add the bot to the group, then optionally set `TELEGRAM_ALLOWED_CHAT_IDS` to restrict which groups it'll respond in. By default it accepts `@<bot_username>` mentions plus the same fallback triggers — override with `TELEGRAM_GROUP_TRIGGERS`. Telegram bots default to "privacy mode" and only see direct mentions in groups; flip via `@BotFather` → `/setprivacy` → Disable to let the bot see all messages.
+- **Discord:** set `DISCORD_ALLOWED_CHANNEL_IDS` to a comma-separated list of channel IDs (Developer Mode → right-click channel → Copy Channel ID). The bot listens in those channels when a message contains its `<@bot_id>` mention or matches `DISCORD_GROUP_TRIGGERS`.
+- **Slack:** set `SLACK_ALLOWED_CHANNEL_IDS` to a list of channel IDs (Cxxxxx for public channels, Gxxxxx for private). You ALSO have to add `message.channels` / `message.groups` / `message.mpim` to the app's Event Subscriptions in the Slack app config — otherwise the bot can't see channel messages. Triggers gated by `SLACK_GROUP_TRIGGERS` or an explicit `<@bot_user_id>` mention.
 
-In group mode the agent only responds when a trigger matches, replies in-thread, and follows tighter etiquette (no private inbox contents, terser replies) defined in `config/personality.md`. Scheduled briefs / reminders still go to the primary 1:1 destination — they never land in a group.
+In group mode the agent only responds when a trigger matches, replies in-thread, and follows tighter etiquette (no private inbox contents, terser replies) defined in `config/personality.md`. Scheduled briefs / reminders still go to the primary 1:1 destination — they never land in a group. Third-party messages (from other group members) are tagged in the archive and purged after `group_chat_retention_days` (default 30; configurable in `triggers.yaml`).
 
 ---
 

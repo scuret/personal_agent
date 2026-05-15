@@ -76,11 +76,23 @@ Each item lists what it adds, why it's not in yet, and what unblocks it.
 ### ~~Discord transport~~ — shipped (`relay/discord_relay.py`; bot via developer portal, DM-only, allowlisted by user ID, image attachments via vision flow).
 ### ~~Slack transport~~ — shipped (`relay/slack_relay.py`; Socket Mode so no public URL needed, DM-only, allowlisted by Slack user ID, image attachments via vision flow).
 
-### SMS via Twilio transport
-- **What:** Fifth option for `RELAY_TRANSPORT`. SMS bidirectional — universal reach (any phone, no app, no Apple/Google ecosystem dependency), bypasses every iMessage/DND/Focus quirk.
-- **Why deferred:** Costs money (~$1/mo for a phone number + ~$0.01/msg outbound) and SMS is text-only (no image attachments → vision flow is unavailable). Worth it as a fallback / travel transport, not as primary.
-- **Unblocks:** Twilio signup → phone number + Account SID + Auth Token. Webhook-based incoming messages (so the daemon needs to expose a public HTTPS endpoint — ngrok for dev, hosted for production). `relay/sms_relay.py` following the existing transport pattern. **Remote-buildable for the code; deployment needs a public URL.**
-- **Effort:** ~hour for code; another hour for deployment story (ngrok or a real host).
+### ~~SMS via Twilio transport~~ — shipped (code; user-side deployment pending)
+- `relay/sms_relay.py` hosts a FastAPI app at `POST /sms/webhook`
+  on `127.0.0.1:8781` (configurable via `SMS_WEBHOOK_PORT`). Webhook
+  POSTs are HMAC-signed by Twilio; the relay validates the
+  signature via `TWILIO_AUTH_TOKEN` before processing.
+- Allowlist by sender phone number (`SMS_ALLOWED_NUMBERS`).
+- Replies via Twilio REST API with line-aware (then character-aware
+  fallback) splitting at 1500 chars / segment.
+- `relay/sender.py` + `relay/run.py` dispatch SMS as the fifth
+  `RELAY_TRANSPORT`. The `twilio>=9.0` dep is in `pyproject.toml`.
+- `.env.example` documents the full setup (Twilio signup → number →
+  credentials → allowlist + ngrok for dev / reverse proxy for prod).
+- Outstanding for the user: Twilio account / number purchase,
+  ngrok or reverse-proxy setup to expose the webhook URL, then
+  paste the URL into Twilio's "A MESSAGE COMES IN" field. The
+  code is ready to receive; the public-reachability piece is the
+  one bit that can't be auto-configured.
 
 ### ~~Group chat support (iMessage + Telegram)~~ — shipped
 - `IMESSAGE_GROUP_CHATS` + `IMESSAGE_GROUP_TRIGGERS` make the iMessage relay listen to allowlisted group chats in addition to the primary 1:1 mode. Trigger substrings gate responses (default `@agent, hey agent, agent,`); replies route back to the originating chat via AppleScript chat-id send.
@@ -88,7 +100,7 @@ Each item lists what it adds, why it's not in yet, and what unblocks it.
 - Loop prevention: iMessage outbound is prefixed with `OUTGOING_MARKER` (zero-width space), and group fetchers filter it out. Telegram bots can't accidentally hear themselves.
 - `python -m relay.imessage_relay --check` lists every group visible in `chat.db` for easy `IMESSAGE_GROUP_CHATS` discovery.
 - `config/personality.md` now has a Group chats section with etiquette: no private inbox contents, terser replies, no spam @-pings. Scheduled briefs / reminders still go to the primary 1:1 destination.
-- **Follow-up (not yet planned):** equivalent channel support in `discord_relay.py` / `slack_relay.py`. Both are DM-only today; the trigger + chat-routing pattern from iMessage/Telegram is the obvious shape.
+- **Discord channel + Slack channel support** — shipped 2026-05-15. Same trigger + allowlist shape as iMessage/Telegram. `DISCORD_ALLOWED_CHANNEL_IDS` + `DISCORD_GROUP_TRIGGERS` for Discord; `SLACK_ALLOWED_CHANNEL_IDS` + `SLACK_GROUP_TRIGGERS` for Slack. Slack also requires adding `message.channels` / `message.groups` / `message.mpim` to the app's Event Subscriptions — documented in `relay/slack_relay.py` and `.env.example`.
 
 ### Dedicated agent identity
 - **What:** Give the agent its own Apple ID or Google Voice number so its replies render as inbound (gray bubbles, "from someone else") instead of as your own outgoing messages in a self-chat. Also avoids the iCloud sync quirks that affect note-to-self threads.

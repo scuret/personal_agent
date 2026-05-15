@@ -21,11 +21,21 @@ Setup (web-only, no Mac required):
      Save as SLACK_BOT_TOKEN in .env.
   4. Event Subscriptions → Enable Events → Subscribe to bot events:
         message.im     (DMs to the bot)
+        message.channels (public channels the bot is invited to —
+                          ONLY needed if you set SLACK_ALLOWED_CHANNEL_IDS)
+        message.groups   (private channels — same caveat)
+        message.mpim     (multi-party DMs — same caveat)
      Save.
   5. Find your Slack user id: workspace → click your name → "View full
      profile" → ⋯ → "Copy member ID" (Uxxxxxxxx). Save as
      SLACK_ALLOWED_USER_IDS in .env (comma-separated for multiple).
   6. Set RELAY_TRANSPORT=slack and restart the relay daemon.
+
+Channel / group support: set SLACK_ALLOWED_CHANNEL_IDS to opt
+specific channels in. The bot will only respond in those channels
+when the message matches a SLACK_GROUP_TRIGGERS substring or
+contains an explicit @-mention of the bot user. DMs from
+allowlisted users keep working unchanged.
 
 Outbound (scheduler briefs / reminders) goes via WebClient
 chat_postMessage to the user's DM channel — same auth, no extra setup.
@@ -76,6 +86,32 @@ def _allowed_user_ids() -> set[str]:
     if not raw:
         return set()
     return {chunk.strip() for chunk in raw.split(",") if chunk.strip()}
+
+
+def _allowed_channel_ids() -> set[str]:
+    """Slack channel IDs (Cxxxxx, Gxxxxx) the bot is allowed to listen
+    in. Empty / unset means DM-only behavior."""
+    raw = os.environ.get("SLACK_ALLOWED_CHANNEL_IDS", "").strip()
+    if not raw:
+        return set()
+    return {chunk.strip() for chunk in raw.split(",") if chunk.strip()}
+
+
+DEFAULT_GROUP_TRIGGERS = ("@agent", "hey agent", "agent,")
+
+
+def _group_triggers() -> list[str]:
+    raw = os.environ.get("SLACK_GROUP_TRIGGERS", "").strip()
+    if not raw:
+        return [t.lower() for t in DEFAULT_GROUP_TRIGGERS]
+    return [chunk.strip().lower() for chunk in raw.split(",") if chunk.strip()]
+
+
+def _matches_group_trigger(text: str, triggers: list[str]) -> bool:
+    if not text:
+        return False
+    lo = text.lower()
+    return any(t in lo for t in triggers)
 
 
 def _resolve_slack_recipient() -> str:
@@ -173,8 +209,10 @@ async def _run_daemon() -> None:
     from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler  # noqa: E402
 
     store = MemoryStore()
-    allowed = _allowed_user_ids()
-    if not allowed:
+    allowed_users = _allowed_user_ids()
+    allowed_channels = _allowed_channel_ids()
+    group_triggers = _group_triggers()
+    if not allowed_users:
         print(
             "WARNING: SLACK_ALLOWED_USER_IDS is empty — bot will ignore everyone. "
             "Add at least your Slack user id (workspace profile → ⋯ → Copy member ID).",
@@ -186,21 +224,56 @@ async def _run_daemon() -> None:
     sdk_client = ClaudeSDKClient(options=options)
     await sdk_client.__aenter__()
 
+    # Resolve the bot's user id so we can recognize @-mentions of it in
+    # group / channel messages (Slack formats those as <@Uxxxxx>).
+    bot_user_id: str = ""
+    try:
+        from slack_sdk import WebClient  # noqa: PLC0415
+
+        bot_user_id = WebClient(token=_bot_token()).auth_test()["user_id"]
+    except Exception as e:  # noqa: BLE001
+        print(f"[slack] auth.test at startup failed: {e}", file=sys.stderr)
+
     @app.event("message")
     async def handle_message(event: dict[str, Any], say) -> None:
-        # Only handle DMs (channel type 'im'); ignore message_changed /
-        # message_deleted / bot_message subtypes.
-        if event.get("channel_type") != "im":
-            return
         if event.get("subtype"):
-            return
-        if event.get("bot_id"):  # skip our own messages
-            return
+            return  # message_changed / message_deleted / bot_message etc.
+        if event.get("bot_id"):
+            return  # skip messages from any bot, including ourselves
 
+        channel_type = event.get("channel_type")
+        is_dm = channel_type == "im"
+        channel_id = event.get("channel", "")
         user_id = event.get("user", "")
-        if user_id not in allowed:
-            print(f"[slack] ignoring DM from unallowed user id={user_id}")
-            return
+
+        if is_dm:
+            if user_id not in allowed_users:
+                print(f"[slack] ignoring DM from unallowed user id={user_id}")
+                return
+            origin_label = "dm"
+        else:
+            # channel / group / mpim — only respond when (a) the
+            # channel is on the allowlist, (b) the sender is on the
+            # user allowlist, and (c) the text contains a trigger
+            # substring or an explicit @-mention of the bot.
+            if channel_type not in ("channel", "group", "mpim"):
+                return  # other event subtype we don't model yet
+            if not allowed_channels or channel_id not in allowed_channels:
+                return
+            if user_id not in allowed_users:
+                print(
+                    f"[slack] ignoring {channel_type} message from unallowed user "
+                    f"id={user_id} in channel {channel_id}"
+                )
+                return
+            text_for_trigger = (event.get("text") or "").lower()
+            bot_mention = f"<@{bot_user_id}>".lower() if bot_user_id else ""
+            mentioned = bot_mention and bot_mention in text_for_trigger
+            if not mentioned and not _matches_group_trigger(
+                text_for_trigger, group_triggers
+            ):
+                return
+            origin_label = f"channel={channel_id}"
 
         text = event.get("text") or ""
         attachments: list[dict[str, str]] = []
@@ -215,14 +288,19 @@ async def _run_daemon() -> None:
         if not text.strip() and not attachments:
             return
 
+        conv_metadata: dict[str, Any] = {"user_id": user_id}
+        if not is_dm:
+            conv_metadata["channel_id"] = channel_id
+            conv_metadata["channel_type"] = channel_type
+            conv_metadata["is_group"] = True
         conversation_id = store.resume_or_open_conversation(
             source=CONVERSATION_SOURCE,
             gap_threshold_hours=CONVERSATION_GAP_HOURS,
-            metadata={"user_id": user_id},
+            metadata=conv_metadata,
         )
 
         final_text = _format_message_for_agent(text, attachments)
-        print(f"[in @ {_now_iso()}] u={user_id}: {final_text[:20]}")
+        print(f"[in @ {_now_iso()}] u={user_id} ({origin_label}): {final_text[:20]}")
         try:
             reply = await process_turn(sdk_client, store, conversation_id, final_text)
         except Exception as e:  # noqa: BLE001
@@ -234,12 +312,20 @@ async def _run_daemon() -> None:
             return
 
         try:
+            # `say()` defaults to the originating channel — works for
+            # DMs, public/private channels, and mpims alike.
             await say(text=reply)
-            print(f"[out] {reply[:20]}")
+            print(f"[out → {origin_label}] {reply[:20]}")
         except Exception as e:  # noqa: BLE001
             print(f"[slack send failed] {e}", file=sys.stderr)
 
-    print(f"[slack] relay started (allowed users: {sorted(allowed)}). ctrl-c to stop.")
+    scope = f"users: {sorted(allowed_users)}"
+    if allowed_channels:
+        scope += f", channels: {sorted(allowed_channels)} (triggers: {group_triggers}"
+        if bot_user_id:
+            scope += f" + <@{bot_user_id}>"
+        scope += ")"
+    print(f"[slack] relay started ({scope}). ctrl-c to stop.")
     handler = AsyncSocketModeHandler(app, _app_token())
     try:
         await handler.start_async()
@@ -268,24 +354,40 @@ def _check() -> int:
             return 1
         print(f"✓ {var} set ({v[:8]}…)")
 
-    allowed = _allowed_user_ids()
-    if not allowed:
+    allowed_users = _allowed_user_ids()
+    if not allowed_users:
         print("✗ SLACK_ALLOWED_USER_IDS empty — bot will ignore everyone")
         return 1
-    print(f"✓ SLACK_ALLOWED_USER_IDS = {sorted(allowed)}")
+    print(f"✓ SLACK_ALLOWED_USER_IDS = {sorted(allowed_users)}")
+
+    allowed_channels = _allowed_channel_ids()
+    if allowed_channels:
+        print(f"✓ SLACK_ALLOWED_CHANNEL_IDS = {sorted(allowed_channels)} (channel-level filter)")
+    else:
+        print("  SLACK_ALLOWED_CHANNEL_IDS unset — bot listens to DMs only")
+    triggers = _group_triggers()
+    print(f"  group-chat triggers = {triggers} (bot's <@id> mention always also accepted)")
 
     try:
         from slack_sdk import WebClient
 
         client = WebClient(token=_bot_token())
         resp = client.auth_test()
-        print(f"✓ bot identity: @{resp['user']} (team {resp['team']})")
+        bot_user_id = resp.get("user_id")
+        print(f"✓ bot identity: @{resp['user']} ({bot_user_id}) in team {resp['team']}")
+        if allowed_channels:
+            print(f"  channel @-mention format = <@{bot_user_id}>")
     except Exception as e:  # noqa: BLE001
         print(f"✗ auth.test failed: {e}")
         return 1
 
     print()
     print("All green. Open the workspace, DM the bot, say hi.")
+    if allowed_channels:
+        print("Channel mode: invite the bot to each allowlisted channel")
+        print("(/invite @your-bot) and @-mention it (or use a trigger phrase)")
+        print("to summon it. Don't forget to subscribe the app to")
+        print("message.channels / message.groups / message.mpim events.")
     return 0
 
 

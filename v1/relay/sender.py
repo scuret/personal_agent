@@ -20,6 +20,7 @@ TRANSPORT_IMESSAGE = "imessage"
 TRANSPORT_TELEGRAM = "telegram"
 TRANSPORT_DISCORD = "discord"
 TRANSPORT_SLACK = "slack"
+TRANSPORT_SMS = "sms"
 
 
 def current_transport() -> str:
@@ -47,11 +48,15 @@ def make_sender():
         from relay.slack_relay import SlackSender, _resolve_slack_recipient
 
         return SlackSender(_resolve_slack_recipient())
+    if transport == TRANSPORT_SMS:
+        from relay.sms_relay import SMSSender, _resolve_sms_recipient
+
+        return SMSSender(_resolve_sms_recipient())
     if transport == TRANSPORT_IMESSAGE:
         from relay.imessage_relay import ChatSender, _resolve_send_handle
 
         return ChatSender(_resolve_send_handle())
     raise RuntimeError(
         f"unknown RELAY_TRANSPORT: {transport!r} "
-        "(expected 'imessage', 'telegram', 'discord', or 'slack')"
+        "(expected 'imessage', 'telegram', 'discord', 'slack', or 'sms')"
     )
