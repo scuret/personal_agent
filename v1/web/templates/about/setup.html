@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}setup guide · personal_agent{% endblock %}
+{% block content %}
+
+<div class="max-w-3xl">
+    <div class="flex items-baseline justify-between mb-4">
+        <h1 class="text-3xl font-semibold">Setup guide</h1>
+        <a href="/wizard" class="text-sm text-sky-400 hover:text-sky-300">→ open install wizard</a>
+    </div>
+    <p class="text-zinc-400 mb-6">
+        This is <code class="mono">SETUP.md</code> rendered as HTML.
+        The web install wizard at <a href="/wizard" class="underline">/wizard</a>
+        deep-links into the sections below for each step.
+    </p>
+
+    <article class="prose prose-invert max-w-none text-zinc-200">
+        {{ rendered_html | safe }}
+    </article>
+</div>
+{% endblock %}
