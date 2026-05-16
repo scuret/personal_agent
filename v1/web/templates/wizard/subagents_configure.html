@@ -1,0 +1,82 @@
+{% extends "wizard/_layout.html" %}
+{% from "wizard/_field.html" import field %}
+{% from "wizard/_verify_panel.html" import verify_panel %}
+{% block step_body %}
+
+<div class="flex items-baseline justify-between mb-3">
+    <h2 class="text-xl font-semibold">{{ sa.description }}</h2>
+    <span class="text-xs text-zinc-500">{{ index + 1 }} of {{ total }}</span>
+</div>
+<p class="text-sm text-zinc-300 mb-3">{{ sa.capabilities }}</p>
+
+{% if tokens_present %}
+<div class="mb-4 px-3 py-2 rounded border border-emerald-700 bg-emerald-950/30 text-xs text-emerald-100">
+    ✓ Already connected — cached token present at <code class="mono">data/{{ sa.name }}_token.*</code>.
+    Skip if everything still works.
+</div>
+{% endif %}
+
+<form method="post" action="/wizard/subagents_configure" class="space-y-2">
+    <input type="hidden" name="index" value="{{ index }}">
+    <input type="hidden" name="subagent" value="{{ sa.name }}">
+
+    {% if sa.env_vars %}
+    {% for var in sa.env_vars %}
+    {{ field(
+        key=var,
+        label=var,
+        help=sa.auth_help if loop.first else "",
+        secret=("KEY" in var or "SECRET" in var or "TOKEN" in var or "PASSWORD" in var),
+        value=values.get(var, ""),
+    ) }}
+    {% endfor %}
+    {% elif sa.needs_google_oauth %}
+    <p class="text-sm text-zinc-300">
+        No per-sub-agent fields — this one piggy-backs on the Google OAuth client
+        you'll set up in the next step ({{ sa.name }} shares Gmail's token).
+    </p>
+    {% else %}
+    <p class="text-sm text-zinc-300">No credentials needed — sub-agent is enabled automatically.</p>
+    {% endif %}
+
+    <div class="text-xs text-zinc-400 mt-3 space-y-1">
+        {% if sa.setup_url %}
+        <div>Provider setup: <a href="{{ sa.setup_url }}" target="_blank" rel="noopener" class="underline text-sky-400 hover:text-sky-300">{{ sa.setup_url }}</a></div>
+        {% endif %}
+        <div>Detailed walkthrough: <a href="/about/setup#{{ sa.name }}" target="_blank" rel="noopener" class="underline hover:text-zinc-300">/about/setup#{{ sa.name }}</a></div>
+    </div>
+
+    <div class="mt-5 flex items-center justify-between">
+        <div class="flex gap-2">
+            <button formaction="/wizard/subagents_configure"
+                    class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium">
+                save &amp; next →
+            </button>
+            <a href="/wizard/subagents_configure?i={{ index + 1 }}"
+               class="px-4 py-2 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-sm">
+                skip this one →
+            </a>
+        </div>
+        <div class="text-xs text-zinc-500">
+            sub-agent {{ index + 1 }} / {{ total }}
+        </div>
+    </div>
+</form>
+
+{% if has_oauth %}
+<div class="mt-6 pt-4 border-t border-zinc-800">
+    <h3 class="text-sm font-semibold mb-2">OAuth — connect via browser</h3>
+    <p class="text-xs text-zinc-400 mb-2">
+        After saving your credentials, click Connect. A browser tab will open
+        for {{ sa.description }} to grant access; the token caches locally so
+        you only do this once.
+    </p>
+    {{ verify_panel(
+        button_label="Connect via browser",
+        start_url="/settings/connect/" + sa.name,
+        panel_id="connect-out-" + sa.name,
+    ) }}
+</div>
+{% endif %}
+
+{% endblock %}

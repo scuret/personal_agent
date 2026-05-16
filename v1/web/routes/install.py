@@ -1,56 +1,59 @@
 """First-run install entrypoint.
 
-`/install` detects a fresh checkout (no `.env`, or `ANTHROPIC_API_KEY` is
-empty) and walks the user into the settings page with a first-run banner.
-If `.env` already has the required key, this just redirects to the
-dashboard — the install flow is a one-time guide, not a permanent page.
+`/install` is now a thin redirect into the guided web wizard at
+`/wizard`. The wizard reads `.env` + `data/.install_progress.json` to
+decide which step you're on; this route just sends you there.
+
+If the wizard's already been completed (`.install_progress.json` has
+`completed_at`), `/install` redirects to the dashboard instead.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from dotenv import dotenv_values
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
-
-from web.templating import templates
+from fastapi import APIRouter
+from fastapi.responses import RedirectResponse
 
 router = APIRouter()
 
 V1_DIR = Path(__file__).resolve().parent.parent.parent
 ENV_PATH = V1_DIR / ".env"
 ENV_EXAMPLE_PATH = V1_DIR / ".env.example"
+PROGRESS_PATH = V1_DIR / "data" / ".install_progress.json"
 
 
 def _required_key_present() -> bool:
-    """True when .env exists and ANTHROPIC_API_KEY is non-empty."""
     if not ENV_PATH.exists():
         return False
     parsed = dotenv_values(ENV_PATH) or {}
     return bool((parsed.get("ANTHROPIC_API_KEY") or "").strip())
 
 
-@router.get("/install", response_class=HTMLResponse, response_model=None)
-async def install_entry(request: Request) -> HTMLResponse | RedirectResponse:
-    """If already installed, send the user to the dashboard. Otherwise
-    render the welcome page that copies .env.example → .env (if missing)
-    and links straight into /settings?first_run=1."""
-    if _required_key_present():
+def _wizard_completed() -> bool:
+    if not PROGRESS_PATH.exists():
+        return False
+    try:
+        return bool(json.loads(PROGRESS_PATH.read_text()).get("completed_at"))
+    except (json.JSONDecodeError, OSError):
+        return False
+
+
+@router.get("/install", response_model=None)
+async def install_entry() -> RedirectResponse:
+    """Route to /wizard for first-run or in-progress, to / once complete."""
+    if _wizard_completed() and _required_key_present():
         return RedirectResponse("/", status_code=303)
-    return templates.TemplateResponse(
-        request, "install/welcome.html",
-        {
-            "env_exists": ENV_PATH.exists(),
-            "env_example_exists": ENV_EXAMPLE_PATH.exists(),
-        },
-    )
+    return RedirectResponse("/wizard", status_code=303)
 
 
 @router.post("/install/bootstrap")
 async def bootstrap_env() -> RedirectResponse:
-    """Create .env from .env.example so the user can edit it in /config/env."""
+    """Legacy endpoint kept for backwards compat. Creates .env from
+    .env.example then redirects to the wizard."""
     if not ENV_PATH.exists() and ENV_EXAMPLE_PATH.exists():
         ENV_PATH.write_text(ENV_EXAMPLE_PATH.read_text())
         ENV_PATH.chmod(0o600)
-    return RedirectResponse("/settings?first_run=1", status_code=303)
+    return RedirectResponse("/wizard", status_code=303)

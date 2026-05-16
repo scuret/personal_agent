@@ -1,0 +1,57 @@
+{% extends "wizard/_layout.html" %}
+{% block step_body %}
+
+<p class="text-sm text-zinc-300 mb-5">
+    Four LaunchAgents auto-start on login: <strong>relay</strong> (your chosen
+    transport), <strong>scheduler</strong> (briefs + reminders + email watch +
+    delivery watch + expected arrivals + retention purges),
+    <strong>log-rotation</strong> (daily at 03:00), and <strong>webui</strong>
+    (this very page at <code class="mono">127.0.0.1:8780</code>).
+</p>
+
+<div class="rounded border border-zinc-800 bg-zinc-900/60 p-4 text-sm mb-5">
+    <p><strong class="text-zinc-100">Without this step:</strong></p>
+    <ul class="list-disc list-inside text-zinc-300 space-y-1 text-xs mt-2">
+        <li>The relay won't be listening for incoming messages.</li>
+        <li>The morning brief won't fire.</li>
+        <li>You'd have to manually launch each daemon every time you reboot.</li>
+    </ul>
+    <p class="mt-3 text-xs text-zinc-400">
+        Click below to run <code class="mono">./launch_agents/install.sh</code> —
+        renders the four plists with absolute paths to your venv's Python and
+        loads them via <code class="mono">launchctl bootstrap</code>. Idempotent;
+        safe to re-run.
+    </p>
+</div>
+
+<button type="button"
+        onclick="installLaunchAgents()"
+        class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium">
+    install / reload LaunchAgents
+</button>
+<pre id="launchagents-out"
+     class="hidden mt-3 mono text-[11px] text-zinc-300 bg-zinc-950 border border-zinc-800 rounded p-3 max-h-72 overflow-y-auto whitespace-pre-wrap"></pre>
+
+<script>
+function installLaunchAgents() {
+    const out = document.getElementById('launchagents-out');
+    out.classList.remove('hidden');
+    out.textContent = '[running launch_agents/install.sh…]\n';
+    fetch('/settings/launchagents/install', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            out.textContent = data.output || `[exit ${data.exit_code}]`;
+            if (data.ok) {
+                out.textContent += '\n[✓ installed — continue below]';
+            }
+        });
+}
+</script>
+
+<form method="post" action="/wizard/launchagents" class="mt-6 flex justify-end">
+    <button class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium">
+        I've installed them — continue →
+    </button>
+</form>
+
+{% endblock %}

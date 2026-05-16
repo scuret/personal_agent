@@ -1,0 +1,61 @@
+{% extends "wizard/_layout.html" %}
+{% from "wizard/_verify_panel.html" import verify_panel %}
+{% block step_body %}
+
+<p class="text-sm text-zinc-300 mb-5">
+    The Google family (Gmail / Calendar / Drive / Docs / Sheets) shares one
+    OAuth client. Set it up once here and all five sub-agents get access.
+</p>
+
+<div class="space-y-5">
+    <div class="rounded border border-zinc-800 bg-zinc-900/60 p-4">
+        <h3 class="text-sm font-semibold mb-2">1. Upload <code class="mono">credentials.json</code></h3>
+        <p class="text-xs text-zinc-400 mb-3">
+            Download from Google Cloud Console → APIs &amp; Services → Credentials →
+            Create OAuth client ID → Desktop app. Detailed walkthrough at
+            <a class="underline" href="/about/setup#google-cloud-project">/about/setup#google-cloud-project</a>.
+        </p>
+        {% if credentials_present %}
+        <div class="mb-3 px-3 py-2 rounded border border-emerald-700 bg-emerald-950/30 text-xs text-emerald-100">
+            ✓ <code class="mono">config/credentials.json</code> already present. Upload a new one to replace.
+        </div>
+        {% endif %}
+        {% if request.query_params.get('uploaded') %}
+        <div class="mb-3 px-3 py-2 rounded border border-amber-700 bg-amber-950/30 text-xs text-amber-100">
+            Uploaded. Now run OAuth below.
+        </div>
+        {% endif %}
+        <form method="post" action="/wizard/google/credentials" enctype="multipart/form-data">
+            <input type="file" name="file" accept="application/json,.json" required
+                   class="text-xs text-zinc-300">
+            <button class="ml-2 px-3 py-1.5 rounded bg-sky-700 hover:bg-sky-600 text-white text-xs">upload</button>
+        </form>
+    </div>
+
+    <div class="rounded border border-zinc-800 bg-zinc-900/60 p-4">
+        <h3 class="text-sm font-semibold mb-2">2. Run the OAuth flow</h3>
+        <p class="text-xs text-zinc-400 mb-3">
+            Opens a browser tab where you grant access. Token caches to
+            <code class="mono">data/google_token.pickle</code> at owner-only perms.
+        </p>
+        {% if token_present %}
+        <div class="mb-3 px-3 py-2 rounded border border-emerald-700 bg-emerald-950/30 text-xs text-emerald-100">
+            ✓ Token already cached. Re-run only if you've added scopes (e.g., enabled Drive after the first auth).
+        </div>
+        {% endif %}
+        {{ verify_panel(
+            button_label="run OAuth flow",
+            start_url="/settings/connect/gmail",
+            panel_id="connect-out-gmail",
+            button_class="bg-emerald-600 hover:bg-emerald-500",
+        ) }}
+    </div>
+</div>
+
+<form method="post" action="/wizard/google_oauth" class="mt-6 flex justify-end">
+    <button class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium">
+        continue →
+    </button>
+</form>
+
+{% endblock %}

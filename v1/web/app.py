@@ -79,6 +79,7 @@ def make_app() -> FastAPI:
         settings,
         settings_transports,
         triggers,
+        wizard,
     )
 
     app.include_router(home.router)
@@ -92,6 +93,7 @@ def make_app() -> FastAPI:
     app.include_router(config.router)
     app.include_router(settings.router)
     app.include_router(settings_transports.router)
+    app.include_router(wizard.router)
     app.include_router(install.router)
     app.include_router(about.router)
 

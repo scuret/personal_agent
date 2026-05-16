@@ -1,0 +1,39 @@
+{% extends "wizard/_layout.html" %}
+{% block step_body %}
+
+<div class="text-center py-8">
+    <div class="text-5xl mb-4">🎉</div>
+    <h2 class="text-2xl font-semibold mb-3">You're done.</h2>
+    <p class="text-zinc-300 mb-6 max-w-md mx-auto">
+        The agent is configured. Daemons should be running.
+        Text your transport or open the web chat to say hi.
+    </p>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 max-w-2xl mx-auto text-sm">
+        <a href="/" class="block p-4 rounded-lg border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70">
+            <div class="font-semibold">dashboard</div>
+            <div class="text-xs text-zinc-400 mt-1">daemon health + today's spend</div>
+        </a>
+        <a href="/chat" class="block p-4 rounded-lg border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70">
+            <div class="font-semibold">chat</div>
+            <div class="text-xs text-zinc-400 mt-1">talk to the agent in the browser</div>
+        </a>
+        <a href="/settings" class="block p-4 rounded-lg border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70">
+            <div class="font-semibold">settings</div>
+            <div class="text-xs text-zinc-400 mt-1">add/remove sub-agents, daemon controls</div>
+        </a>
+    </div>
+
+    <form method="post" action="/wizard/finish" class="mt-8">
+        <button class="px-6 py-3 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium">
+            mark wizard complete &amp; go to dashboard →
+        </button>
+    </form>
+
+    <p class="mt-4 text-xs text-zinc-500">
+        After this, <code class="mono">/install</code> redirects to <code class="mono">/</code> instead of back here.
+        Re-run the wizard any time via <a class="underline hover:text-zinc-300" href="/wizard?force=1">/wizard</a>.
+    </p>
+</div>
+
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "wizard/_layout.html" %}
+{% from "wizard/_field.html" import field %}
+{% block step_body %}
+
+<form method="post" action="/wizard/behavior" class="space-y-2">
+    {{ field(
+        key="USER_TIMEZONE",
+        label="Timezone (IANA)",
+        help="Used for scheduling. E.g., America/Chicago, Europe/London, Asia/Tokyo. List: en.wikipedia.org/wiki/List_of_tz_database_time_zones",
+        placeholder="America/Chicago",
+        value=env.get("USER_TIMEZONE", "America/Chicago"),
+        name_override="USER_TIMEZONE",
+    ) }}
+
+    {{ field(
+        key="CLAUDE_MODEL",
+        label="Default Claude model",
+        help="Used for chat / relay turns. The scheduler overrides per-trigger (briefs use Opus 4.7, triage uses Haiku 4.5).",
+        select_options=["claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5-20251001"],
+        default="claude-sonnet-4-6",
+        value=env.get("CLAUDE_MODEL", "claude-sonnet-4-6"),
+        name_override="CLAUDE_MODEL",
+    ) }}
+
+    <p class="text-xs text-zinc-400 mt-3">
+        Tune the agent's voice + hard rules at
+        <a class="underline" href="/config/personality">/config/personality</a>.
+        Restart the relay after personality edits.
+    </p>
+
+    <div class="mt-5 flex items-center justify-end">
+        <button class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium">
+            save &amp; continue →
+        </button>
+    </div>
+</form>
+
+{% endblock %}

@@ -1,0 +1,27 @@
+{% extends "wizard/_layout.html" %}
+{% block step_body %}
+
+<form method="post" action="/wizard/transport_pick" class="space-y-3">
+    {% for t in transports %}
+    <label class="block rounded-lg border {{ 'border-sky-500 bg-sky-950/30' if t.name == current_transport else 'border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70' }} p-4 cursor-pointer transition">
+        <div class="flex items-baseline gap-3">
+            <input type="radio" name="transport" value="{{ t.name }}"
+                   {% if t.name == current_transport %}checked{% endif %}
+                   class="h-4 w-4">
+            <span class="font-semibold text-zinc-100">{{ t.label }}</span>
+            <span class="text-xs text-zinc-500">{{ t.platform_note }}</span>
+            <a href="/about/setup#transport-{{ t.name }}" target="_blank" rel="noopener"
+               class="ml-auto text-xs text-sky-400 hover:text-sky-300">setup guide →</a>
+        </div>
+        <p class="mt-2 text-sm text-zinc-300">{{ t.description }}</p>
+    </label>
+    {% endfor %}
+
+    <div class="mt-5 flex items-center justify-end">
+        <button class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium">
+            continue →
+        </button>
+    </div>
+</form>
+
+{% endblock %}

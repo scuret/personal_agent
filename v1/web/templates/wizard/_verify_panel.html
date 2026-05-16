@@ -1,0 +1,65 @@
+{# Verify / Connect button + SSE-tailed output pane.
+
+   Called as:
+   {% from "wizard/_verify_panel.html" import verify_panel %}
+   {{ verify_panel(button_label="Verify",
+                   start_url="/wizard/verify/imessage",
+                   stream_url_template="/wizard/verify/{kind}/stream",
+                   panel_id="verify-out-imessage") }}
+
+   For OAuth Connect (reusing /settings/connect/{name}):
+   {{ verify_panel(button_label="Connect via browser",
+                   start_url="/settings/connect/gmail",
+                   panel_id="connect-out-gmail") }}
+
+   When the POST returns JSON like {"ok": true, "stream": "..."} the
+   panel opens an EventSource on the returned stream URL and appends
+   each `event: line` to the <pre>.
+#}
+
+{% macro verify_panel(button_label, start_url, panel_id="verify-out",
+                       button_class="bg-sky-700 hover:bg-sky-600") %}
+<div class="mt-3">
+    <button type="button"
+            onclick="paWizardVerify('{{ start_url }}', '{{ panel_id }}')"
+            class="px-4 py-2 rounded {{ button_class }} text-white text-sm font-medium">
+        {{ button_label }}
+    </button>
+    <pre id="{{ panel_id }}"
+         class="hidden mt-3 mono text-[11px] text-zinc-300 bg-zinc-950 border border-zinc-800 rounded p-3 max-h-72 overflow-y-auto whitespace-pre-wrap"></pre>
+</div>
+{% endmacro %}
+
+{# Shared JS — define once per page. The macro is idempotent enough
+   that including it twice still works (the function gets redefined). #}
+<script>
+if (!window.paWizardVerify) {
+    window.paWizardVerify = function(startUrl, panelId) {
+        const out = document.getElementById(panelId);
+        if (!out) { console.error('panel not found:', panelId); return; }
+        out.classList.remove('hidden');
+        out.textContent = '[starting…]\n';
+        fetch(startUrl, { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.ok) {
+                    out.textContent += '[error: ' + (data.detail || JSON.stringify(data)) + ']\n';
+                    return;
+                }
+                const src = new EventSource(data.stream);
+                src.addEventListener('line', e => {
+                    out.textContent += e.data + '\n';
+                    out.scrollTop = out.scrollHeight;
+                });
+                src.addEventListener('done', e => {
+                    out.textContent += '[done — exit ' + e.data + ']\n';
+                    src.close();
+                });
+                src.onerror = () => {
+                    out.textContent += '[stream closed]\n';
+                    src.close();
+                };
+            });
+    };
+}
+</script>

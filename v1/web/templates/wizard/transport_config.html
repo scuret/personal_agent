@@ -1,0 +1,49 @@
+{% extends "wizard/_layout.html" %}
+{% from "wizard/_field.html" import field %}
+{% from "wizard/_verify_panel.html" import verify_panel %}
+{% block step_body %}
+
+<div class="flex items-baseline justify-between mb-4">
+    <h2 class="text-xl font-semibold">{{ transport.label }}</h2>
+    <a href="/about/setup#transport-{{ transport.name }}" target="_blank" rel="noopener"
+       class="text-xs text-sky-400 hover:text-sky-300">setup guide →</a>
+</div>
+<p class="text-sm text-zinc-300 mb-5">{{ transport.description }}</p>
+
+<form method="post" action="/wizard/transport_config" class="space-y-2">
+    {% for f in fields %}
+    {{ field(
+        key=f.key,
+        label=f.label,
+        help=f.help,
+        secret=f.secret,
+        optional=f.optional,
+        placeholder=f.placeholder,
+        default=f.default,
+        select_options=f.select_options,
+        value=f.value,
+    ) }}
+    {% endfor %}
+
+    <div class="mt-5 flex items-center justify-between">
+        <a href="/wizard/transport_pick" class="text-sm text-zinc-400 hover:text-zinc-200">← pick a different transport</a>
+        <button class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium">
+            save &amp; continue →
+        </button>
+    </div>
+</form>
+
+<div class="mt-6 pt-4 border-t border-zinc-800">
+    <h3 class="text-sm font-semibold mb-2">Verify before continuing</h3>
+    <p class="text-xs text-zinc-400 mb-2">
+        Confirm your credentials work by running the transport's <code class="mono">--check</code>.
+        Save first, then click Verify.
+    </p>
+    {{ verify_panel(
+        button_label="Verify (--check)",
+        start_url="/settings/transports/verify/" + transport.name,
+        panel_id="verify-out-" + transport.name,
+    ) }}
+</div>
+
+{% endblock %}

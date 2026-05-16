@@ -1,0 +1,33 @@
+{% extends "wizard/_layout.html" %}
+{% block step_body %}
+
+<p class="text-sm text-zinc-300 mb-5">
+    Email triage is configured in <code class="mono">config/triggers.yaml</code>.
+    The defaults work for most people. Edit any time at
+    <a class="underline" href="/config/triggers">/config/triggers</a> — the
+    scheduler re-reads on every tick, no restart needed.
+</p>
+
+<div class="rounded border border-zinc-800 bg-zinc-900/60 p-4 text-sm space-y-2">
+    <p><strong class="text-zinc-100">What's on by default:</strong></p>
+    <ul class="list-disc list-inside text-zinc-300 space-y-1 text-xs">
+        <li>Real-time email triage (Haiku decides whether each non-automated unread email is worth a ping)</li>
+        <li>Morning brief at 07:30 local — includes today's calendar, top tasks, urgent unread emails</li>
+        <li>Sunday weekly review at 20:00 local</li>
+        <li>Delivery watch (UPS / FedEx / Amazon / USPS / DHL)</li>
+    </ul>
+    <p class="mt-3"><strong class="text-zinc-100">Privacy opt-out:</strong></p>
+    <p class="text-xs text-zinc-300">
+        Set <code class="mono">EMAIL_TRIAGE_LOCAL_ONLY=true</code> in <code class="mono">.env</code> to stop
+        sending any email content to Anthropic. You won't get email pings; the
+        rest of the brief still works.
+    </p>
+</div>
+
+<form method="post" action="/wizard/triggers_email" class="mt-5 flex justify-end">
+    <button class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium">
+        accept defaults &amp; continue →
+    </button>
+</form>
+
+{% endblock %}

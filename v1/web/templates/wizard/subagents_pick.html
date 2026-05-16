@@ -1,0 +1,64 @@
+{% extends "wizard/_layout.html" %}
+{% block step_body %}
+
+<p class="text-sm text-zinc-300 mb-5">
+    Toggle the sub-agents you want. You can always come back to <a class="underline" href="/wizard/subagents_pick">this step</a>
+    or wire more up later from <a class="underline" href="/settings">/settings</a>.
+</p>
+
+{% if always_on %}
+<div class="mb-6 rounded-lg border border-emerald-900 bg-emerald-950/20 p-4">
+    <h3 class="text-sm font-semibold text-emerald-300 mb-2">✓ Always included <span class="text-zinc-500 font-normal">({{ always_on | length }})</span></h3>
+    <p class="text-xs text-zinc-400 mb-3">No auth needed — these are wired in automatically.</p>
+    <ul class="space-y-1 text-sm">
+        {% for sa in always_on %}
+        <li class="text-zinc-200">
+            <span class="font-medium">{{ sa.description }}</span>
+            <span class="text-zinc-500 mono text-xs">({{ sa.name }})</span>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<form method="post" action="/wizard/subagents_pick">
+    <h3 class="text-sm font-semibold text-zinc-100 mb-2">Optional sub-agents</h3>
+    <p class="text-xs text-zinc-400 mb-4">Each one tells you what you can do with it. Toggle on the ones you want now; you can add more later.</p>
+
+    <div class="space-y-3">
+        {% for sa in optional %}
+        <label class="block rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 cursor-pointer hover:bg-zinc-900/70 transition">
+            <div class="flex items-baseline gap-3">
+                <input type="checkbox" name="subagent" value="{{ sa.name }}"
+                       {% if sa.name in enabled %}checked{% endif %}
+                       class="h-4 w-4 mt-1">
+                <div class="flex-1">
+                    <div class="flex items-baseline gap-2">
+                        <span class="font-semibold text-zinc-100">{{ sa.description }}</span>
+                        <span class="mono text-[11px] text-zinc-500">{{ sa.name }}</span>
+                    </div>
+                    {% if sa.capabilities %}
+                    <p class="mt-2 text-sm text-zinc-300">{{ sa.capabilities }}</p>
+                    {% endif %}
+                    <div class="mt-2 text-xs flex gap-3 text-zinc-500">
+                        {% if sa.setup_url %}
+                        <a href="{{ sa.setup_url }}" target="_blank" rel="noopener"
+                           class="text-sky-400 hover:text-sky-300">↗ provider</a>
+                        {% endif %}
+                        <a href="/about/setup#{{ sa.name }}" target="_blank" rel="noopener"
+                           class="hover:text-zinc-300">detailed setup →</a>
+                    </div>
+                </div>
+            </div>
+        </label>
+        {% endfor %}
+    </div>
+
+    <div class="mt-6 flex items-center justify-end">
+        <button class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium">
+            save selection &amp; continue →
+        </button>
+    </div>
+</form>
+
+{% endblock %}

@@ -1,0 +1,26 @@
+{% extends "wizard/_layout.html" %}
+{% block step_body %}
+
+<p class="text-sm text-zinc-300 mb-5">
+    The scheduler fires a morning brief and a Sunday weekly review by default.
+    Tune times + content at <a class="underline" href="/config/triggers">/config/triggers</a>
+    when you're ready.
+</p>
+
+<div class="rounded border border-zinc-800 bg-zinc-900/60 p-4 text-sm space-y-2">
+    <p><strong class="text-zinc-100">Defaults:</strong></p>
+    <ul class="list-disc list-inside text-zinc-300 space-y-1 text-xs">
+        <li>Morning brief: daily 07:30 local</li>
+        <li>Weekly review: Sunday 20:00 local</li>
+        <li>Expected-arrivals gap detection: cadence 12h, default retention 30d</li>
+        <li>Reminders + briefs run on Opus 4.7 (relay stays on Sonnet for cost)</li>
+    </ul>
+</div>
+
+<form method="post" action="/wizard/triggers_schedule" class="mt-5 flex justify-end">
+    <button class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium">
+        accept defaults &amp; continue →
+    </button>
+</form>
+
+{% endblock %}
