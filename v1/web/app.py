@@ -77,6 +77,7 @@ def make_app() -> FastAPI:
         observability,
         reminders,
         settings,
+        settings_transports,
         triggers,
     )
 
@@ -90,6 +91,7 @@ def make_app() -> FastAPI:
     app.include_router(daemon.router)
     app.include_router(config.router)
     app.include_router(settings.router)
+    app.include_router(settings_transports.router)
     app.include_router(install.router)
     app.include_router(about.router)
 

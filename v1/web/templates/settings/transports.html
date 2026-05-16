@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}transports · settings · personal_agent{% endblock %}
+{% block content %}
+
+<div class="flex items-baseline justify-between mb-6">
+    <div>
+        <a href="/settings" class="text-sm text-zinc-400 hover:text-zinc-200">← settings</a>
+        <h1 class="text-2xl font-semibold mt-1">transports</h1>
+        <p class="text-sm text-zinc-400 mt-1">
+            Pick how the agent talks to you. One transport runs at a time —
+            the relay daemon reads <span class="mono">RELAY_TRANSPORT</span>
+            from <span class="mono">.env</span> at startup.
+        </p>
+    </div>
+    <div class="text-xs text-zinc-500 text-right">
+        <div>active: <span class="mono text-emerald-300">{{ active_transport }}</span></div>
+    </div>
+</div>
+
+{% if saved %}
+<div class="mb-4 px-4 py-3 rounded border border-amber-700 bg-amber-950/30 text-sm text-amber-100">
+    Saved. Restart the relay daemon to pick up the new transport config —
+    use the <em>restart</em> button on the
+    <a href="/settings" class="underline">settings page</a> or run:
+    <code class="mono text-amber-200">launchctl kickstart -k gui/$(id -u)/com.personal-agent.relay</code>
+</div>
+{% endif %}
+
+<!-- Transport picker (radio cards) -->
+<div class="grid grid-cols-1 md:grid-cols-5 gap-2 mb-8">
+    {% for t in transports %}
+    {% set is_active = t.name == active_transport %}
+    {% set is_selected = t.name == selected.name %}
+    <a href="?pick={{ t.name }}"
+       class="block p-3 rounded-lg border transition
+              {% if is_selected %}border-sky-500 bg-sky-950/30{% else %}border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70{% endif %}">
+        <div class="flex items-center justify-between">
+            <span class="font-medium text-sm">{{ t.label }}</span>
+            {% if is_active %}
+            <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">active</span>
+            {% endif %}
+        </div>
+        <div class="text-xs text-zinc-500 mt-1">{{ t.platform_note }}</div>
+    </a>
+    {% endfor %}
+</div>
+
+<!-- Selected transport panel -->
+<div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-5 mb-6">
+    <div class="flex items-baseline justify-between mb-2">
+        <h2 class="text-lg font-semibold">{{ selected.label }}</h2>
+        <a href="{{ selected.setup_url }}" target="_blank" rel="noopener"
+           class="text-xs text-sky-400 hover:text-sky-300">↗ provider setup</a>
+    </div>
+    <p class="text-sm text-zinc-300 mb-5">{{ selected.description }}</p>
+
+    <form method="post" action="/settings/transports/save" class="space-y-4">
+        <input type="hidden" name="transport" value="{{ selected.name }}">
+
+        {% for f in selected_fields %}
+        <div>
+            <div class="flex items-baseline gap-2">
+                <label class="block text-sm font-medium text-zinc-200" for="f_{{ f.key }}">
+                    {{ f.label }}
+                </label>
+                <span class="mono text-[11px] text-zinc-500">{{ f.key }}</span>
+                {% if f.optional %}
+                <span class="text-[10px] uppercase tracking-wider text-zinc-500">optional</span>
+                {% endif %}
+                {% if f.secret %}
+                <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300">sensitive</span>
+                {% endif %}
+            </div>
+            {% if f.help %}
+            <p class="text-xs text-zinc-400 mt-1">{{ f.help }}</p>
+            {% endif %}
+
+            {% if f.select_options %}
+            <select id="f_{{ f.key }}" name="field:{{ f.key }}"
+                    class="mt-2 w-full px-3 py-2 rounded bg-zinc-950 border border-zinc-800 mono text-sm
+                           focus:outline-none focus:border-zinc-600">
+                {% for opt in f.select_options %}
+                <option value="{{ opt }}" {% if (f.value or f.default) == opt %}selected{% endif %}>{{ opt }}</option>
+                {% endfor %}
+            </select>
+            {% else %}
+            <div class="mt-2 flex items-center gap-2">
+                <input type="{{ 'password' if f.secret else 'text' }}"
+                       id="f_{{ f.key }}"
+                       name="field:{{ f.key }}"
+                       value="{{ f.value }}"
+                       placeholder="{{ f.placeholder or f.default }}"
+                       class="flex-1 px-3 py-2 rounded bg-zinc-950 border border-zinc-800 mono text-sm
+                              focus:outline-none focus:border-zinc-600">
+                {% if f.secret %}
+                <button type="button"
+                        onclick="(function(b){const i=b.parentElement.querySelector('input');i.type=(i.type==='password')?'text':'password';})(this)"
+                        class="text-xs text-zinc-400 hover:text-zinc-100 px-2 py-1"
+                        title="show / hide">👁</button>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+
+        <div class="flex items-center gap-3 pt-2">
+            <button type="submit"
+                    class="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium">
+                save
+            </button>
+            <button type="button" onclick="verifyTransport('{{ selected.name }}')"
+                    class="px-4 py-2 rounded bg-sky-700 hover:bg-sky-600 text-white text-sm font-medium">
+                verify (--check)
+            </button>
+            <span class="text-xs text-zinc-500">
+                save writes to <span class="mono">.env</span>; verify runs
+                <span class="mono">python -m {{ selected.verify_module }} --check</span> and streams the output below.
+            </span>
+        </div>
+    </form>
+
+    <pre id="verify-output"
+         class="hidden mt-4 mono text-[11px] text-zinc-300 bg-zinc-950 border border-zinc-800 rounded p-3 max-h-72 overflow-y-auto whitespace-pre-wrap"></pre>
+</div>
+
+<div class="text-xs text-zinc-500">
+    Pull in any extra env vars at
+    <a href="/config/env" class="underline">/config/env</a>. Restart daemons at
+    <a href="/settings" class="underline">/settings</a>.
+</div>
+
+<script>
+function verifyTransport(name) {
+    const out = document.getElementById('verify-output');
+    out.classList.remove('hidden');
+    out.textContent = `[starting ${name} --check…]\n`;
+    fetch(`/settings/transports/verify/${name}`, { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (!data.ok) {
+                out.textContent += `[error: ${data.detail || JSON.stringify(data)}]\n`;
+                return;
+            }
+            const src = new EventSource(data.stream);
+            src.addEventListener('line', e => {
+                out.textContent += e.data + '\n';
+                out.scrollTop = out.scrollHeight;
+            });
+            src.addEventListener('done', e => {
+                out.textContent += `[done — exit ${e.data}]\n`;
+                src.close();
+            });
+            src.onerror = () => {
+                out.textContent += '[stream closed]\n';
+                src.close();
+            };
+        });
+}
+</script>
+{% endblock %}

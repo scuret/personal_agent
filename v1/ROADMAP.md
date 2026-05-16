@@ -17,6 +17,7 @@ Plus a **local admin web UI** at `http://127.0.0.1:8780`:
 - Settings dashboard at `/settings`: sub-agent status (configured / needs-auth / connected), one-click Connect buttons that spawn the matching `mcp_servers/*_auth.py` script and SSE-tail its stdout, plus a single button to render-and-bootstrap the four LaunchAgent plists
 - Install wizard at `/install`: detects a fresh checkout (`.env` missing or empty `ANTHROPIC_API_KEY`), bootstraps `.env` from `.env.example`, and walks the user into the settings page with a first-run banner. Home redirects to `/install` when first-run state is detected
 - Web chat image attachments: 📎 picker (cap 4 per turn), saves under `data/uploads/<conv_id>/`, prepends `[attachment: image at PATH (mime)]` markers same as iMessage / Telegram / Discord / Slack relays so the vision sub-agent flow is identical
+- Transport picker at `/settings/transports` — guided radio-button UI for the 5 transports (iMessage / Telegram / Discord / Slack / SMS). Per-transport field metadata in `web/routes/settings_transports.py` (one source of truth) drives the form; save writes to `.env` while preserving comments; verify button SSE-streams `python -m relay.<x>_relay --check`.
 - Auto-started via `com.personal-agent.webui` LaunchAgent
 
 Plus operational tooling and infrastructure:

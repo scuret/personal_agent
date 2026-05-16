@@ -19,10 +19,14 @@
     </span>
 </div>
 
-<section class="mb-8 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+<section class="mb-8 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+    <a href="/settings/transports" class="block p-4 rounded-lg border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70">
+        <div class="font-semibold">📡 transports</div>
+        <div class="text-xs text-zinc-400 mt-1">guided picker for iMessage / Telegram / Discord / Slack / SMS</div>
+    </a>
     <a href="/config/env" class="block p-4 rounded-lg border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70">
         <div class="font-semibold">🔑 .env</div>
-        <div class="text-xs text-zinc-400 mt-1">API keys + transport + timezone</div>
+        <div class="text-xs text-zinc-400 mt-1">API keys + raw env editor</div>
         {% if not env_present %}<div class="text-xs text-rose-400 mt-1">missing — run install.sh or paste here</div>{% endif %}
     </a>
     <a href="/config/triggers" class="block p-4 rounded-lg border border-zinc-800 bg-zinc-900/40 hover:bg-zinc-900/70">

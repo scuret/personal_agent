@@ -259,6 +259,7 @@ LaunchAgent) and you get:
 - **Config** — in-browser editors for `triggers.yaml` (live reload, no restart), `personality.md` (restart required), `.env` (secret-masked, restart required)
 - **Facts + Reminders** — list + create + deactivate / cancel directly from the browser
 - **Settings** — sub-agent status dashboard with one-click Connect buttons (subprocess + SSE streams the OAuth script's stdout live) and a "install / reload LaunchAgents" button
+- **Transports** — guided picker at `/settings/transports` with radio cards for the 5 transports, per-transport field walkthroughs (labels + inline help + secret masking + reveal toggles), a "verify" button that runs the matching `--check` and SSE-streams the output, and an in-place save that writes to `.env` while preserving comments
 - **Install wizard** — `/install` detects a fresh checkout (no `.env` / empty `ANTHROPIC_API_KEY`), bootstraps `.env` from `.env.example`, and walks you into the settings page with a first-run banner
 - **Chat image attachments** — drag-and-drop or 📎 picker; images saved under `data/uploads/<conv_id>/` and routed through the vision sub-agent same as the iMessage / Telegram / Discord / Slack relays
 
