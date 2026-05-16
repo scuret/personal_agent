@@ -442,7 +442,11 @@ async def step_save(request: Request, step_name: str):
         progress = _write_progress({"acknowledged_disclosure": True})
 
     elif step_name == "anthropic":
-        key = (form.get("ANTHROPIC_API_KEY") or "").strip()
+        # Accept either the bare key name or the `field:` macro prefix —
+        # both forms have shipped at different points. Belt + suspenders
+        # so a template change can't silently break submission again.
+        raw = form.get("ANTHROPIC_API_KEY") or form.get("field:ANTHROPIC_API_KEY") or ""
+        key = str(raw).strip()
         if not key:
             return RedirectResponse("/wizard/anthropic?empty=1", status_code=303)
         write_env_values({"ANTHROPIC_API_KEY": key})
