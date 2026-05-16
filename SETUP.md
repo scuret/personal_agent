@@ -374,6 +374,8 @@ Free quota: 10,000 units/day. Search = 100 units, lookups = 1.
 
 ### <a id="dropbox"></a> Dropbox
 
+![Dropbox app create](docs/setup/dropbox-app-create.png)
+
 **Click path:**
 
 1. <https://www.dropbox.com/developers/apps> → **Create app**.
