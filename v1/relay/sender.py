@@ -53,9 +53,16 @@ def make_sender():
 
         return SMSSender(_resolve_sms_recipient())
     if transport == TRANSPORT_IMESSAGE:
-        from relay.imessage_relay import ChatSender, _resolve_send_handle
+        from relay.imessage_relay import (
+            ChatSender,
+            _resolve_send_handle,
+            _resolve_service_match,
+        )
 
-        return ChatSender(_resolve_send_handle())
+        return ChatSender(
+            _resolve_send_handle(),
+            service_match=_resolve_service_match(),
+        )
     raise RuntimeError(
         f"unknown RELAY_TRANSPORT: {transport!r} "
         "(expected 'imessage', 'telegram', 'discord', 'slack', or 'sms')"

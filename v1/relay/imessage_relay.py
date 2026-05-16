@@ -16,8 +16,12 @@ Two macOS permissions are required, granted once per machine:
      (macOS prompts).
 
 Run modes:
-    python -m relay.imessage_relay --check    # diagnostics only, no daemon
-    python -m relay.imessage_relay            # run the daemon
+    python -m relay.imessage_relay --check          # diagnostics only, no daemon
+    python -m relay.imessage_relay --list-services  # enumerate signed-in Messages
+                                                    # accounts (helps pick
+                                                    # IMESSAGE_AGENT_APPLE_ID in
+                                                    # dedicated-identity mode)
+    python -m relay.imessage_relay                  # run the daemon
 
 Configuration via .env:
     TARGET_PHONE_NUMBER     The contact whose iMessages get relayed.
@@ -59,14 +63,24 @@ LAST_SEEN_KEY = "imessage_last_seen_rowid"
 CONVERSATION_SOURCE = "imessage"
 CONVERSATION_GAP_HOURS = 4.0
 
-# Primary-mode dispatch. "contact" filters on a single SENDER handle
-# (incoming from someone else). "self" listens to your own messages in
-# note-to-self chats so you can text your own agent. Group-chat support
-# is additive on top of the primary mode (see IMESSAGE_GROUP_CHATS) so
-# you can text the agent both in note-to-self AND in family / work
-# groups from the same daemon.
+# Primary-mode dispatch.
+#   "self"      — listens to your own messages in note-to-self chats so
+#                 you can text your own agent. Default for fresh installs.
+#   "contact"   — filters on a single SENDER handle (incoming from
+#                 someone else). Useful for testing or letting someone
+#                 else talk to the agent.
+#   "dedicated" — the agent has its OWN Apple ID signed in to Messages.app
+#                 alongside yours. Reads incoming from IMESSAGE_USER_HANDLE
+#                 (you), sends back via the agent's own iMessage service
+#                 so replies render as inbound gray bubbles instead of
+#                 your own outgoing in a self-chat. See SETUP.md
+#                 #imessage-dedicated-identity for the account setup.
+# Group-chat support (IMESSAGE_GROUP_CHATS) is additive on top of any
+# primary mode.
 MODE_CONTACT = "contact"
 MODE_SELF = "self"
+MODE_DEDICATED = "dedicated"
+ALL_MODES = (MODE_CONTACT, MODE_SELF, MODE_DEDICATED)
 
 # When IMESSAGE_GROUP_TRIGGERS is unset, this is the default substring
 # list that gates whether a group message becomes an agent turn. Case-
@@ -232,13 +246,33 @@ def _matches_group_trigger(text: str, triggers: list[str]) -> bool:
     return any(t in lo for t in triggers)
 
 
+def _user_handle_dedicated() -> str:
+    """The user's primary Apple ID handle, in dedicated-identity mode."""
+    return os.environ.get("IMESSAGE_USER_HANDLE", "").strip()
+
+
+def _agent_apple_id() -> str:
+    """The agent's Apple ID email, in dedicated-identity mode.
+
+    Used to scope AppleScript sends to the right iMessage service when
+    Messages.app has two accounts signed in. We match it as a substring
+    of each service's `id` and `description` properties; the first
+    iMessage service whose id or description contains this value is
+    treated as the agent's account.
+    """
+    return os.environ.get("IMESSAGE_AGENT_APPLE_ID", "").strip()
+
+
 def _resolve_send_handle() -> str:
     """Where outgoing iMessages get sent.
 
     Used by both the relay's reply path and (via relay.sender) the
     scheduler's brief / reminder send path.
-      * self mode  → the principal's first self-handle
-      * contact mode → TARGET_PHONE_NUMBER
+      * self mode      → the principal's first self-handle
+      * contact mode   → TARGET_PHONE_NUMBER
+      * dedicated mode → IMESSAGE_USER_HANDLE (the user is the
+                         recipient; the agent's Apple ID is the
+                         sender, scoped via _agent_apple_id())
     """
     mode = os.environ.get("IMESSAGE_MODE", MODE_CONTACT).strip().lower()
     if mode == MODE_SELF:
@@ -246,10 +280,31 @@ def _resolve_send_handle() -> str:
         if not handles:
             raise RuntimeError("IMESSAGE_MODE=self but no TARGET_PHONE_NUMBER set")
         return handles[0]
+    if mode == MODE_DEDICATED:
+        user = _user_handle_dedicated()
+        if not user:
+            raise RuntimeError(
+                "IMESSAGE_MODE=dedicated but IMESSAGE_USER_HANDLE not set"
+            )
+        return user
     target = os.environ.get("TARGET_PHONE_NUMBER", "").strip()
     if not target:
         raise RuntimeError("TARGET_PHONE_NUMBER not set")
     return target
+
+
+def _resolve_service_match() -> str | None:
+    """The service-match substring for AppleScript send scoping.
+
+    Returns the agent's Apple ID email in dedicated mode so the sender
+    targets the right Messages.app service; returns None for the other
+    modes (which use the default "1st iMessage service" path).
+    """
+    mode = os.environ.get("IMESSAGE_MODE", MODE_CONTACT).strip().lower()
+    if mode == MODE_DEDICATED:
+        match = _agent_apple_id()
+        return match or None
+    return None
 
 
 # ─── Reading from chat.db ────────────────────────────────────────────────────
@@ -258,13 +313,13 @@ def _resolve_send_handle() -> str:
 class ChatReader:
     """Pulls new agent-input messages from chat.db.
 
-    Two modes:
+    Three modes:
 
-      contact mode (current default)
+      contact mode
           Listen for incoming messages from a single sender. Filter:
-          h.id = target_handle, is_from_me = 0. Group chats out of scope.
+          h.id = target_handle, is_from_me = 0.
 
-      self mode
+      self mode (current default)
           Listen for messages in note-to-self chats so you can text your
           own agent. We do NOT filter on is_from_me because the same
           Apple ID can produce both is_from_me=1 (typed on this Mac) and
@@ -272,6 +327,17 @@ class ChatReader:
           another device on the account). Loop prevention is handled by
           OUTGOING_MARKER (zero-width space) on every reply we send;
           we drop any incoming message whose text starts with it.
+
+      dedicated mode
+          The agent has its OWN Apple ID signed in to Messages.app on
+          this Mac alongside yours. The user texts FROM their primary
+          Apple ID (IMESSAGE_USER_HANDLE) TO the agent's Apple ID. From
+          chat.db's view that's an incoming row with is_from_me=0 and
+          h.id=IMESSAGE_USER_HANDLE — same filter shape as contact mode.
+          The send side is what differs: AppleScript targets the agent's
+          iMessage service explicitly (via _agent_apple_id()) so replies
+          go out FROM the agent's Apple ID, rendering as inbound gray
+          bubbles on the user's phone instead of self-chat outgoing.
     """
 
     def __init__(
@@ -281,14 +347,18 @@ class ChatReader:
         self_handles: list[str],
         group_chats: list[str] | None = None,
         group_triggers: list[str] | None = None,
+        user_handle: str = "",
     ) -> None:
-        if mode not in (MODE_CONTACT, MODE_SELF):
+        if mode not in ALL_MODES:
             raise ValueError(f"unknown IMESSAGE_MODE: {mode!r}")
         self.mode = mode
         self.target_handle = target_handle
         self.self_handles = self_handles
-        # Group support is additive: the primary mode (contact / self)
-        # still runs as before. Empty group list = disabled.
+        # Dedicated-mode only: the user's primary Apple ID handle. Reads
+        # filter on `h.id = user_handle AND is_from_me = 0`.
+        self.user_handle = user_handle
+        # Group support is additive: the primary mode (contact / self /
+        # dedicated) still runs as before. Empty group list = disabled.
         self.group_chats: list[str] = group_chats or []
         self.group_triggers: list[str] = group_triggers or []
 
@@ -355,6 +425,14 @@ class ChatReader:
         """
         if self.mode == MODE_CONTACT:
             primary, primary_max = self._fetch_contact(last_rowid, limit)
+        elif self.mode == MODE_DEDICATED:
+            # Same fetch shape as contact mode, but the "from" handle is
+            # the user, not an external contact. _fetch_contact does the
+            # is_from_me=0 + h.id-filter that catches the incoming-to-
+            # agent row even though both Apple IDs are signed in here.
+            primary, primary_max = self._fetch_contact(
+                last_rowid, limit, handle_override=self.user_handle
+            )
         else:
             primary, primary_max = self._fetch_self(last_rowid, limit)
 
@@ -367,8 +445,12 @@ class ChatReader:
         return combined, max(primary_max, group_max)
 
     def _fetch_contact(
-        self, last_rowid: int, limit: int
+        self, last_rowid: int, limit: int, handle_override: str | None = None
     ) -> tuple[list[dict[str, Any]], int]:
+        # `handle_override` lets dedicated mode reuse this fetcher with
+        # the user's handle as the "sender" — same SQL shape, different
+        # source of the parameter.
+        handle = (handle_override or self.target_handle).strip()
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT m.ROWID AS rowid, m.text, m.attributedBody, m.date, h.id AS sender
@@ -379,13 +461,20 @@ class ChatReader:
                       AND m.ROWID > ?
                  ORDER BY m.ROWID ASC
                     LIMIT ?""",
-                (self.target_handle, last_rowid, limit),
+                (handle, last_rowid, limit),
             ).fetchall()
         result: list[dict[str, Any]] = []
         max_rowid = last_rowid
         for r in rows:
             max_rowid = max(max_rowid, int(r["rowid"]))
             text = _resolve_text(r)
+            # Dedicated mode: our own replies come back into chat.db with
+            # is_from_me=0 from the AGENT'S perspective (the agent's Apple
+            # ID is the receiver of its own outbound when read through
+            # the user-account's view, and vice versa). The OUTGOING_MARKER
+            # keeps the daemon from looping on its own replies.
+            if text.startswith(OUTGOING_MARKER):
+                continue
             attachments = self._image_attachments_for(int(r["rowid"]))
             # Image-only messages have empty text but non-empty attachments;
             # we still want to process those (the agent should describe them).
@@ -597,11 +686,47 @@ class ChatSender:
     # which is more forgiving across iCloud accounts.
     _GROUP_ID_PREFIX = "iMessage;+;"
 
-    def __init__(self, target_handle: str) -> None:
+    def __init__(self, target_handle: str, service_match: str | None = None) -> None:
+        # `service_match` is for dedicated-identity mode: when two Apple
+        # IDs are signed in to Messages.app, the "1st iMessage service"
+        # default could pick the wrong account. Passing the agent's
+        # Apple ID here scopes AppleScript to the matching service (by
+        # substring match on its `id` or `description`) so replies go
+        # out from the right identity. None = use the default 1st-service
+        # pattern (back-compat with self / contact modes).
         self.target_handle = target_handle
+        self.service_match = service_match
 
     def _buddy_script(self, text: str) -> str:
         safe = text.replace("\\", "\\\\").replace('"', '\\"')
+        if self.service_match:
+            match_safe = self.service_match.replace("\\", "\\\\").replace('"', '\\"')
+            return f"""
+            tell application "Messages"
+                set targetService to missing value
+                repeat with svc in services
+                    if (service type of svc) is iMessage then
+                        set svcId to ""
+                        try
+                            set svcId to (id of svc) as string
+                        end try
+                        set svcDesc to ""
+                        try
+                            set svcDesc to (description of svc) as string
+                        end try
+                        if (svcId contains "{match_safe}") or (svcDesc contains "{match_safe}") then
+                            set targetService to svc
+                            exit repeat
+                        end if
+                    end if
+                end repeat
+                if targetService is missing value then
+                    error "iMessage service matching '{match_safe}' not found — check that the agent's Apple ID is signed in to Messages.app and run `python -m relay.imessage_relay --list-services` to verify."
+                end if
+                set targetBuddy to buddy "{self.target_handle}" of targetService
+                send "{safe}" to targetBuddy
+            end tell
+            """
         return f"""
         tell application "Messages"
             set targetService to 1st service whose service type = iMessage
@@ -675,6 +800,8 @@ async def _run_daemon(
     poll_interval: float,
     group_chats: list[str] | None = None,
     group_triggers: list[str] | None = None,
+    user_handle: str = "",
+    agent_apple_id: str = "",
 ) -> None:
     store = MemoryStore()
     reader = ChatReader(
@@ -683,12 +810,26 @@ async def _run_daemon(
         self_handles=self_handles,
         group_chats=group_chats or [],
         group_triggers=group_triggers or [],
+        user_handle=user_handle,
     )
-    # In self mode we send replies back to the same self handle the user
-    # is texting. In contact mode we send to the contact. Group replies
-    # route per-message via `send_to_chat_id`, regardless of this default.
-    sender_handle = self_handles[0] if mode == MODE_SELF else target_handle
-    sender = ChatSender(sender_handle)
+    # Default sender handle per mode:
+    #   self      → first self handle
+    #   contact   → TARGET_PHONE_NUMBER
+    #   dedicated → IMESSAGE_USER_HANDLE (the user is the recipient;
+    #               the agent's Apple ID is the sender, scoped by
+    #               service_match below)
+    # Group replies route per-message via `send_to_chat_id`, ignoring
+    # this default.
+    if mode == MODE_SELF:
+        sender_handle = self_handles[0]
+    elif mode == MODE_DEDICATED:
+        sender_handle = user_handle
+    else:
+        sender_handle = target_handle
+    sender = ChatSender(
+        sender_handle,
+        service_match=agent_apple_id if mode == MODE_DEDICATED else None,
+    )
 
     # On a fresh install, start from "now" — don't replay history.
     last_seen_str = store.get_state(LAST_SEEN_KEY)
@@ -704,6 +845,11 @@ async def _run_daemon(
     options = build_options(store)
     if mode == MODE_SELF:
         watching = f"self mode (chats: {', '.join(self_handles)})"
+    elif mode == MODE_DEDICATED:
+        watching = (
+            f"dedicated-identity mode "
+            f"(user={user_handle}, agent Apple ID={agent_apple_id or '?'})"
+        )
     else:
         watching = f"contact mode (sender: {target_handle})"
     if group_chats:
@@ -729,9 +875,14 @@ async def _run_daemon(
                 is_group = bool(msg.get("is_group"))
                 chat_identifier = msg.get("chat_identifier") or ""
                 # 4h-gap rollover. Per-chat metadata so the archive can
-                # distinguish group conversations from 1:1 ones.
+                # distinguish group conversations from 1:1 ones. In
+                # dedicated mode the "handle" of interest is the user's
+                # handle (the principal); target_handle isn't set.
+                primary_handle = (
+                    user_handle if mode == MODE_DEDICATED else target_handle
+                )
                 conv_metadata: dict[str, Any] = {
-                    "handle": target_handle,
+                    "handle": primary_handle,
                     "is_group": is_group,
                 }
                 if is_group:
@@ -786,24 +937,134 @@ async def _run_daemon(
 # ─── Diagnostics ─────────────────────────────────────────────────────────────
 
 
+def list_messages_services() -> list[dict[str, str]]:
+    """Enumerate all signed-in Messages.app services.
+
+    Returns one dict per service with `id`, `name`, `service_type`,
+    `description`. Used by --list-services and by --check in dedicated
+    mode so the user can confirm the agent's Apple ID is signed in and
+    pick a value for IMESSAGE_AGENT_APPLE_ID.
+
+    Uses ‖ (U+2016) as a field delimiter in the AppleScript output —
+    far less likely to appear in a service id/description than | or :.
+    """
+    script = """
+    tell application "Messages"
+        set out to ""
+        repeat with svc in services
+            set svcId to ""
+            try
+                set svcId to (id of svc) as string
+            end try
+            set svcName to ""
+            try
+                set svcName to (name of svc) as string
+            end try
+            set svcType to ""
+            try
+                set svcType to (service type of svc) as string
+            end try
+            set svcDesc to ""
+            try
+                set svcDesc to (description of svc) as string
+            end try
+            set out to out & svcId & "‖" & svcName & "‖" & svcType & "‖" & svcDesc & linefeed
+        end repeat
+        return out
+    end tell
+    """
+    try:
+        raw = applescript.AppleScript(source=script).run()
+    except applescript.ScriptError as e:
+        raise RuntimeError(
+            f"AppleScript failed (Messages.app may not be running, or "
+            f"Automation permission for Messages was denied): {e}"
+        ) from e
+    services: list[dict[str, str]] = []
+    if not raw:
+        return services
+    for line in str(raw).splitlines():
+        parts = line.split("‖")
+        if len(parts) < 4:
+            continue
+        services.append({
+            "id": parts[0].strip(),
+            "name": parts[1].strip(),
+            "service_type": parts[2].strip(),
+            "description": parts[3].strip(),
+        })
+    return services
+
+
+def _list_services_cli() -> int:
+    """Print signed-in Messages services to stdout — for --list-services."""
+    print("=== Messages.app services ===\n")
+    try:
+        services = list_messages_services()
+    except RuntimeError as e:
+        print(f"✗ {e}", file=sys.stderr)
+        return 1
+    if not services:
+        print(
+            "  no services found. Open Messages.app first and confirm at "
+            "least one account is signed in (Messages → Settings → iMessage)."
+        )
+        return 1
+    for s in services:
+        marker = "•" if (s.get("service_type") or "").lower() == "imessage" else "·"
+        print(f"  {marker} type={s['service_type']!r}  id={s['id']!r}")
+        if s.get("name"):
+            print(f"        name={s['name']!r}")
+        if s.get("description"):
+            print(f"        description={s['description']!r}")
+    print()
+    print(
+        "Copy the Apple ID email shown in `id` or `description` of the "
+        "AGENT's iMessage service into IMESSAGE_AGENT_APPLE_ID. The relay "
+        "matches it as a substring against both fields."
+    )
+    return 0
+
+
 def _check(
     mode: str,
     target_handle: str,
     self_handles: list[str],
     group_chats: list[str] | None = None,
     group_triggers: list[str] | None = None,
+    user_handle: str = "",
+    agent_apple_id: str = "",
 ) -> int:
     print("=== iMessage relay diagnostics ===\n")
 
-    if mode not in (MODE_CONTACT, MODE_SELF):
-        print(f"✗ IMESSAGE_MODE = {mode!r} (must be 'contact' or 'self')")
+    if mode not in ALL_MODES:
+        print(
+            f"✗ IMESSAGE_MODE = {mode!r} "
+            f"(must be one of: {', '.join(ALL_MODES)})"
+        )
         return 1
     print(f"✓ IMESSAGE_MODE = {mode}")
 
-    if not target_handle:
-        print("✗ TARGET_PHONE_NUMBER is not set in .env")
-        return 1
-    print(f"✓ TARGET_PHONE_NUMBER = {target_handle}")
+    if mode == MODE_DEDICATED:
+        # In dedicated mode, TARGET_PHONE_NUMBER is unused; the user
+        # and agent handles are the two relevant identities.
+        if not user_handle:
+            print("✗ IMESSAGE_USER_HANDLE is not set in .env (required for dedicated mode)")
+            return 1
+        print(f"✓ IMESSAGE_USER_HANDLE = {user_handle}")
+        if not agent_apple_id:
+            print(
+                "✗ IMESSAGE_AGENT_APPLE_ID is not set in .env "
+                "(required for dedicated mode — used to scope AppleScript sends "
+                "to the agent's iMessage service when two Apple IDs are signed in)"
+            )
+            return 1
+        print(f"✓ IMESSAGE_AGENT_APPLE_ID = {agent_apple_id}")
+    else:
+        if not target_handle:
+            print("✗ TARGET_PHONE_NUMBER is not set in .env")
+            return 1
+        print(f"✓ TARGET_PHONE_NUMBER = {target_handle}")
 
     if mode == MODE_SELF:
         print(f"✓ self handles = {self_handles}")
@@ -823,6 +1084,7 @@ def _check(
         self_handles=self_handles,
         group_chats=group_chats or [],
         group_triggers=group_triggers or [],
+        user_handle=user_handle,
     )
     ok, why = reader.can_read()
     if not ok:
@@ -863,6 +1125,54 @@ def _check(
             if len(groups) > 15:
                 print(f"    … and {len(groups) - 15} more")
 
+    # Dedicated mode: confirm the agent's iMessage service is signed in
+    # and that IMESSAGE_AGENT_APPLE_ID actually matches one of them.
+    if mode == MODE_DEDICATED:
+        print()
+        try:
+            services = list_messages_services()
+        except RuntimeError as e:
+            print(
+                f"✗ couldn't enumerate Messages services: {e}\n"
+                "  Open Messages.app once and re-run."
+            )
+            return 1
+        imessage_svcs = [
+            s for s in services
+            if (s.get("service_type") or "").lower() == "imessage"
+        ]
+        if not imessage_svcs:
+            print("✗ no iMessage services signed in to Messages.app")
+            print(
+                "  Open Messages.app → Settings → iMessage → sign in with "
+                "the agent's Apple ID."
+            )
+            return 1
+        match = agent_apple_id.lower()
+        matched = [
+            s for s in imessage_svcs
+            if match in (s.get("id") or "").lower()
+            or match in (s.get("description") or "").lower()
+        ]
+        print(f"  iMessage services signed in: {len(imessage_svcs)}")
+        for s in imessage_svcs:
+            print(
+                f"    id={s['id']!r}  description={s['description']!r}"
+            )
+        if not matched:
+            print(
+                f"\n✗ no iMessage service matched IMESSAGE_AGENT_APPLE_ID="
+                f"{agent_apple_id!r}\n"
+                "  Run `python -m relay.imessage_relay --list-services` and "
+                "copy the agent's Apple ID exactly as it appears in the "
+                "`id` or `description` of its iMessage service."
+            )
+            return 1
+        print(
+            f"✓ IMESSAGE_AGENT_APPLE_ID matches "
+            f"{len(matched)} iMessage service(s)"
+        )
+
     # AppleScript permission isn't checkable without trying to send. We
     # don't actually send a probe — the first real send will trigger the
     # macOS prompt if needed.
@@ -881,17 +1191,41 @@ def _check(
 
 
 def main() -> None:
+    # --list-services is a standalone diagnostic; it doesn't need .env
+    # state beyond the AppleScript permission, so handle it before
+    # parsing the rest of the config.
+    if "--list-services" in sys.argv:
+        sys.exit(_list_services_cli())
+
     mode = os.environ.get("IMESSAGE_MODE", MODE_CONTACT).strip().lower()
     target_handle = os.environ.get("TARGET_PHONE_NUMBER", "").strip()
     self_handles = _self_handles() if mode == MODE_SELF else []
     poll_interval = float(os.environ.get("IMESSAGE_POLL_INTERVAL", "5"))
     group_chats = _group_chats()
     group_triggers = _group_triggers() if group_chats else []
+    user_handle = _user_handle_dedicated()
+    agent_apple_id = _agent_apple_id()
 
     if "--check" in sys.argv:
-        sys.exit(_check(mode, target_handle, self_handles, group_chats, group_triggers))
+        sys.exit(_check(
+            mode, target_handle, self_handles, group_chats, group_triggers,
+            user_handle=user_handle, agent_apple_id=agent_apple_id,
+        ))
 
-    if not target_handle:
+    if mode == MODE_DEDICATED:
+        if not user_handle:
+            print(
+                "error: IMESSAGE_MODE=dedicated requires IMESSAGE_USER_HANDLE",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not agent_apple_id:
+            print(
+                "error: IMESSAGE_MODE=dedicated requires IMESSAGE_AGENT_APPLE_ID",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    elif not target_handle:
         print("error: TARGET_PHONE_NUMBER not set in .env", file=sys.stderr)
         sys.exit(1)
     if not os.environ.get("ANTHROPIC_API_KEY"):
@@ -905,6 +1239,7 @@ def main() -> None:
         asyncio.run(_run_daemon(
             mode, target_handle, self_handles, poll_interval,
             group_chats=group_chats, group_triggers=group_triggers,
+            user_handle=user_handle, agent_apple_id=agent_apple_id,
         ))
     except KeyboardInterrupt:
         print("\nrelay stopped.")

@@ -489,6 +489,7 @@ In `.env`, choose a mode:
 
 - `IMESSAGE_MODE=self` — text yourself from your iPhone (uses note-to-self chat, requires `TARGET_PHONE_NUMBER` set to your own number plus optional `SELF_HANDLES` for your Apple ID email).
 - `IMESSAGE_MODE=contact` — listen to messages from one specific contact (useful for testing or letting someone else use the agent).
+- `IMESSAGE_MODE=dedicated` — give the agent its **own Apple ID** signed in to Messages.app alongside yours. Replies render as inbound gray bubbles (from someone else) instead of self-chat outgoing. Requires creating a second Apple ID (browser flow at [account.apple.com](https://account.apple.com/account)), a real mobile number for SMS verification, and signing in on the Mac. Full walkthrough + policy caveat in [SETUP.md → Advanced: dedicated agent identity](../SETUP.md#imessage-dedicated-identity).
 
 Then grant macOS permissions for the daemon to work under launchd:
 

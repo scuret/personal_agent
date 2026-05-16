@@ -22,7 +22,7 @@ Plus a **local admin web UI** at `http://127.0.0.1:8780`:
 - Auto-started via `com.personal-agent.webui` LaunchAgent
 
 Plus operational tooling and infrastructure:
-- iMessage relay (contact + self mode, attributedBody decoder for DND-suppressed messages)
+- iMessage relay (self / contact / **dedicated-identity** modes, attributedBody decoder for DND-suppressed messages, `--list-services` diagnostic for picking the agent's iMessage service in dedicated mode)
 - Telegram relay (alternative transport, allowlisted user IDs, image-attachment support)
 - Pluggable transport via `RELAY_TRANSPORT` + `relay/run.py` dispatcher
 - Recurring reminders (daily / weekdays / weekly / monthly)
@@ -104,12 +104,12 @@ Each item lists what it adds, why it's not in yet, and what unblocks it.
 - `config/personality.md` now has a Group chats section with etiquette: no private inbox contents, terser replies, no spam @-pings. Scheduled briefs / reminders still go to the primary 1:1 destination.
 - **Discord channel + Slack channel support** — shipped 2026-05-15. Same trigger + allowlist shape as iMessage/Telegram. `DISCORD_ALLOWED_CHANNEL_IDS` + `DISCORD_GROUP_TRIGGERS` for Discord; `SLACK_ALLOWED_CHANNEL_IDS` + `SLACK_GROUP_TRIGGERS` for Slack. Slack also requires adding `message.channels` / `message.groups` / `message.mpim` to the app's Event Subscriptions — documented in `relay/slack_relay.py` and `.env.example`.
 
-### Dedicated agent identity
-- **What:** Give the agent its own Apple ID or Google Voice number so its replies render as inbound (gray bubbles, "from someone else") instead of as your own outgoing messages in a self-chat. Also avoids the iCloud sync quirks that affect note-to-self threads.
-- **Why deferred:** Setting up a fresh Apple ID requires signing in on a device (browser-only Apple ID creation has been restricted since 2022); Google Voice needs phone verification. Both want some local-device access.
-- **Unblocks:** External account setup + iMessage configuration on the Mac.
-- **NOT remote-buildable.**
-- **Effort:** ~half-day end-to-end (account creation, device sign-in, relay reconfiguration).
+### ~~Dedicated agent identity~~ — code shipped 2026-05-16; user-side account setup is the remaining manual step
+- The relay now has a third mode (`IMESSAGE_MODE=dedicated`) alongside `self` and `contact`. The agent's Apple ID signs in to Messages.app on the same Mac as the user's; the daemon reads incoming messages from `IMESSAGE_USER_HANDLE` (same SQL shape as contact mode) and sends replies through the iMessage service whose `id` or `description` substring-matches `IMESSAGE_AGENT_APPLE_ID`. Replies render as inbound gray bubbles instead of self-chat outgoing.
+- New diagnostic `python -m relay.imessage_relay --list-services` enumerates signed-in Messages.app services so the user can confirm the agent's Apple ID is registered and copy the matching identifier into `.env`. The existing `--check` now also validates dedicated-mode env vars and confirms the configured agent Apple ID matches a live iMessage service.
+- Research findings on Apple ID creation (2026-05-16): browser-only creation IS still supported at account.apple.com, but the new account needs a one-time sign-in on a device (the user's own Mac is fine) to activate iMessage, plus a real mobile phone number for SMS verification (Google Voice / VOIP blocked), plus mandatory irreversible 2FA. Multiple Apple IDs per person is not prohibited by Apple's ToS, but the iCloud Terms' broad "no automated means, like scripts" clause makes this gray area. No public bans of single-user low-volume two-IDs-one-person setups; all known bans are commercial / high-volume / multi-user. Full walkthrough + risk callout in `SETUP.md#imessage-dedicated-identity`.
+- User-side remaining: create the second Apple ID, sign in on Messages.app, paste the user-handle + agent-Apple-ID into `.env`, smoke-test. Code is ready to receive.
+- **NOT remote-buildable** for the user-side account creation step (Apple wants real-mobile SMS verification + a one-time device sign-in for new IDs).
 
 ### Multi-LLM provider support (Anthropic + OpenAI + Gemini)
 - **What:** Let the installer prompt for the LLM provider — Claude (current default), OpenAI ChatGPT, or Google Gemini — and have the rest of the agent stack work transparently regardless of which is configured. Primary driver is the public-template story: when the repo goes public, strangers should be able to use the provider they already have a subscription with.

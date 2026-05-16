@@ -15,6 +15,7 @@ covers the same flow interactively.
 - [2. Anthropic API key](#anthropic) **(required)**
 - [3. Pick a transport](#pick-transport) **(required)** — how the agent talks to you
   - [iMessage](#transport-imessage) (macOS only)
+    - [Advanced: dedicated agent identity](#imessage-dedicated-identity) — give the agent its own Apple ID
   - [Telegram](#transport-telegram)
   - [Discord](#transport-discord)
   - [Slack](#transport-slack)
@@ -114,15 +115,120 @@ optionally opt in to group chats.
    (e.g., `/opt/homebrew/Cellar/python@3.13/3.13.x/Frameworks/Python.framework/Versions/3.13/Resources/Python.app`).
 3. **Automation → Messages** is granted on first AppleScript send (macOS
    prompts; click Allow).
-4. In the wizard, pick **Mode**: `self` if you want to text yourself from your
-   iPhone, `contact` if you want a specific other person to talk to the agent.
-5. Set **TARGET_PHONE_NUMBER** in E.164 format (`+15551234567`).
+4. In the wizard, pick **Mode**:
+   - `self` (default) — you text yourself from your iPhone, the agent replies
+     in the same self-chat thread.
+   - `contact` — a specific other person is the only one allowed to talk to
+     the agent.
+   - `dedicated` — the agent has its **own Apple ID** signed in to Messages.app
+     alongside yours. Replies render as inbound (gray bubbles, from someone
+     else) instead of self-chat outgoing. See the
+     [dedicated agent identity walkthrough](#imessage-dedicated-identity) for
+     account setup — it has hard requirements and a policy caveat you should
+     read before starting.
+5. Set **TARGET_PHONE_NUMBER** in E.164 format (`+15551234567`). In dedicated
+   mode this is left blank; you set `IMESSAGE_USER_HANDLE` +
+   `IMESSAGE_AGENT_APPLE_ID` instead.
 6. Optional: opt in to group chats. Run `python -m relay.imessage_relay --check`
    to see every group visible in your chat.db (with display names + IDs), then
    paste the IDs into **IMESSAGE_GROUP_CHATS**.
 
 **Verify:** the wizard's "Verify" button runs the same `--check` and prints
 chat.db readability, target handle resolution, etc.
+
+### <a id="imessage-dedicated-identity"></a> Advanced: dedicated agent identity
+
+**You'll do:** create a second Apple ID just for the agent, sign it into
+Messages.app on your Mac alongside your primary, and reconfigure the relay
+to send through it.
+
+**What you get:** replies render as inbound gray bubbles ("from someone else")
+instead of as your own outgoing in a self-chat. Cleaner conversation feel and
+avoids iCloud sync quirks of note-to-self threads.
+
+> ⚠ **Policy gray area — read before you start.**
+>
+> Apple's iCloud Terms have a broad "no automated means, like scripts" clause.
+> It doesn't name AppleScript or Messages.app, but it's broad enough that
+> Apple *could* invoke it. There are **no public reports** of single-user,
+> low-volume, two-Apple-IDs-one-person setups being suspended — all known
+> iMessage bans (Beeper, Lindy, etc.) involve commercial / multi-user /
+> high-volume usage. But Apple can suspend iMessage on the agent's Apple ID
+> at any time with no appeals process. Treat this as **gray-area policy** and
+> assume you might lose the agent account someday — keep it strictly personal
+> and low-volume.
+
+**Hard requirements:**
+- A **real mobile phone number** for SMS verification. Google Voice and most
+  VOIP numbers are blocked by Apple. A cheap prepaid SIM works if you don't
+  want to use your own line.
+- A **distinct email address** for the new ID (community reports on Gmail `+`
+  aliases are mixed — use a separate Gmail address to be safe).
+- **2FA is mandatory and irreversible** on new Apple IDs — there's no opt-out.
+
+**Click path:**
+
+1. **Create the agent's Apple ID in your browser.**
+   - Open <https://account.apple.com/account> in an incognito window so it
+     doesn't try to merge with your existing session.
+   - Click *Create your Apple Account*.
+   - Use a **distinct email address** (recommended: a fresh Gmail you control)
+     and your **real mobile number** for SMS verification.
+   - Choose a strong password, complete 2FA setup, accept the terms.
+
+2. **Verify the ID is alive.**
+   - Sign out of `account.apple.com` and sign back in with the new credentials
+     to confirm the account works end-to-end.
+
+3. **Sign in to Messages.app on your Mac with the agent's Apple ID.**
+   - **Messages → Settings → iMessage → Sign In**. Use the new Apple ID + 2FA
+     code.
+   - You should now see **two** iMessage accounts listed — your primary and
+     the agent's. Leave both enabled. The agent's account is now "alive" on
+     this Mac and can send + receive iMessages.
+
+4. **Confirm the agent's iMessage service is registered.**
+   - From the project directory, run:
+     ```
+     python -m relay.imessage_relay --list-services
+     ```
+   - You should see an `iMessage` service whose `description` contains the
+     agent's Apple ID email (e.g., `description='E:agent@gmail.com'`). The
+     `E:` prefix is how Messages.app stores account-bound services — just
+     paste the email portion into `.env`.
+
+5. **Configure the relay.** In the wizard, on the iMessage transport step:
+   - Mode = `dedicated`
+   - `IMESSAGE_USER_HANDLE` = your primary phone number or Apple ID email,
+     E.164 format (`+15551234567`). This is the handle the agent reads
+     incoming messages from.
+   - `IMESSAGE_AGENT_APPLE_ID` = the agent's Apple ID email (e.g.
+     `agent@gmail.com`). This is the substring used to scope AppleScript
+     sends to the agent's iMessage service.
+   - `TARGET_PHONE_NUMBER` = leave blank.
+
+6. **Verify with `--check`.** The relay's diagnostic now confirms:
+   - Both required env vars are set.
+   - At least one iMessage service is signed in to Messages.app.
+   - One of those services matches `IMESSAGE_AGENT_APPLE_ID`.
+   - chat.db is readable and shows the expected `latest_rowid`.
+
+7. **Smoke test.** From your phone, iMessage the agent's Apple ID (the email
+   address). The relay should pick up the message and reply. The reply should
+   render as a **gray bubble** (inbound, from someone else) on your phone —
+   not as your own outgoing in a self-chat.
+
+**Things that can go wrong:**
+- *"iMessage service matching '<email>' not found"* on send → run
+  `--list-services` and confirm the agent's iMessage service is listed.
+  If only your primary is shown, sign in to the agent's ID again in
+  Messages.app and wait ~30 sec for the service to register.
+- *Reply lands in the wrong account's chat* → both Apple IDs are signed in,
+  but `IMESSAGE_AGENT_APPLE_ID` doesn't match the agent's service. Re-check
+  the substring matches the agent's `description` field.
+- *Apple ID locked / 2FA failures* → real-mobile-number requirement means a
+  prepaid SIM has to stay live. If the SIM lapses, you'll lose the ability
+  to receive Apple-ID 2FA codes and effectively lose the account.
 
 ### <a id="transport-telegram"></a> Telegram
 
