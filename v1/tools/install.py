@@ -44,7 +44,15 @@ TRIGGERS_EXAMPLE_PATH = CONFIG_DIR / "triggers.yaml.example"
 @dataclass
 class SubAgent:
     name: str
-    description: str
+    description: str               # short label / one-line headline
+    # 2-4 sentence paragraph: what the user can DO with this sub-agent
+    # day-to-day AND how it ties into the rest of the agent (morning
+    # brief, scheduler, vision flow, other sub-agents). Surfaced in the
+    # web install wizard's sub-agent picker so users can decide whether
+    # to enable it based on product-level value, not just integration
+    # surface. Empty `capabilities` falls back to `description` in the
+    # UI but every entry below populates it.
+    capabilities: str = ""
     env_vars: list[str] = field(default_factory=list)
     needs_google_oauth: bool = False
     auth_help: str = ""           # one-liner shown when prompting
@@ -53,23 +61,139 @@ class SubAgent:
 
 
 SUBAGENTS: list[SubAgent] = [
-    SubAgent("memory", "Conversation archive + extracted facts + audit log", always_on=True),
-    SubAgent("weather", "Open-Meteo current + forecast", always_on=True),
-    SubAgent("vision", "Image analysis on iMessage attachments", always_on=True),
-    SubAgent("wikipedia", "Search + read articles", always_on=True),
-    SubAgent("reddit", "Public-read subreddits / search / posts", always_on=True),
-    SubAgent("reminders", "Schedule 'remind me at 4pm' iMessage pings", always_on=True),
+    SubAgent(
+        "memory",
+        "Conversation archive + extracted facts + audit log",
+        capabilities=(
+            "Persists every conversation, every fact the agent extracts about you, "
+            "and a verbatim audit log of every Claude API call. Powers semantic "
+            "recall ('remember when we talked about X'), the morning brief's "
+            "context injection, and the analytics dashboard. Stored locally in "
+            "data/memory.sqlite — no cloud."
+        ),
+        always_on=True,
+    ),
+    SubAgent(
+        "weather",
+        "Open-Meteo current + forecast",
+        capabilities=(
+            "Current conditions + multi-day forecast for any location (uses your "
+            "USER_HOME_ADDRESS as default). Free, keyless. Woven into the morning "
+            "brief as a one-line forecast for the day."
+        ),
+        always_on=True,
+    ),
+    SubAgent(
+        "vision",
+        "Image analysis on attachments",
+        capabilities=(
+            "Describes images you attach in any transport. iMessage HEIC photos "
+            "are auto-converted to JPEG, web-chat uploads route through the same "
+            "path. The agent calls this whenever it sees an [attachment: image] "
+            "marker in your message. Required for any image-aware conversation."
+        ),
+        always_on=True,
+    ),
+    SubAgent(
+        "wikipedia",
+        "Search + read articles",
+        capabilities=(
+            "Quick factual lookups without leaving the chat — 'who wrote X?', "
+            "'when was Y?'. Returns full article summaries or specific section "
+            "extracts. Always-on, no key needed."
+        ),
+        always_on=True,
+    ),
+    SubAgent(
+        "reddit",
+        "Public-read subreddits / search / posts",
+        capabilities=(
+            "Reads top / hot / new posts from any public subreddit, plus comment "
+            "threads. Useful for 'what's r/news saying right now' style questions. "
+            "Read-only (no posting, no auth needed)."
+        ),
+        always_on=True,
+    ),
+    SubAgent(
+        "reminders",
+        "Schedule 'remind me at 4pm' pings",
+        capabilities=(
+            "Schedules one-off and recurring (daily / weekdays / weekly / monthly) "
+            "reminders that fire over your active transport. Just say 'remind me "
+            "to take out the trash at 7pm' and the scheduler handles delivery. "
+            "Stored locally; no external dep."
+        ),
+        always_on=True,
+    ),
     # Apple-native (AppleScript). always_on=True because they need no
     # auth, but they're only registered on macOS by agent_host's
     # _is_macos gate — on Linux/Windows the agent won't see these tools.
-    SubAgent("reminders_apple", "Apple Reminders.app — list/create/complete/delete (macOS only)", always_on=True),
-    SubAgent("notes_apple", "Apple Notes.app — read/search/append/create (macOS only)", always_on=True),
-    SubAgent("photos_apple", "Apple Photos.app — albums/dates (read-only, macOS only)", always_on=True),
-    SubAgent("music_apple", "Apple Music.app — playback control on this Mac", always_on=True),
-    SubAgent("mail_apple", "Apple Mail.app — search + read + draft (never sends, macOS only)", always_on=True),
+    SubAgent(
+        "reminders_apple",
+        "Apple Reminders.app (macOS)",
+        capabilities=(
+            "List, create, complete, and delete items in any of your Apple "
+            "Reminders lists. Syncs to iPhone via iCloud automatically — set "
+            "from your Mac, see it on your phone. Distinct from the always-on "
+            "`reminders` sub-agent (which is the agent's own scheduler)."
+        ),
+        always_on=True,
+    ),
+    SubAgent(
+        "notes_apple",
+        "Apple Notes.app (macOS)",
+        capabilities=(
+            "Search by title, read existing notes, append text to them, or "
+            "create new ones. The agent can stash a quick thought to a 'running "
+            "list' note or pull context out of an existing one. iCloud syncs "
+            "the result to your phone."
+        ),
+        always_on=True,
+    ),
+    SubAgent(
+        "photos_apple",
+        "Apple Photos.app (macOS, read-only)",
+        capabilities=(
+            "List albums, find photos in a date range, get album contents. "
+            "Read-only — face / object / place ML tags aren't reachable via "
+            "AppleScript, so 'find photos of the kids' won't work, but 'photos "
+            "from last Tuesday' will."
+        ),
+        always_on=True,
+    ),
+    SubAgent(
+        "music_apple",
+        "Apple Music.app (macOS)",
+        capabilities=(
+            "Now-playing, play/pause/next, search-and-play, list playlists. "
+            "Controls Music.app on THIS Mac specifically (not phone playback). "
+            "Coexists with Spotify — the agent picks based on your phrasing "
+            "('play X on Apple Music' vs 'queue X on Spotify')."
+        ),
+        always_on=True,
+    ),
+    SubAgent(
+        "mail_apple",
+        "Apple Mail.app (macOS, drafts only)",
+        capabilities=(
+            "List accounts + inboxes, search messages, read, draft replies, "
+            "draft new messages. NEVER sends — same hard safety rule as Gmail. "
+            "Useful if you read mail in Mail.app instead of (or alongside) "
+            "Gmail web."
+        ),
+        always_on=True,
+    ),
     SubAgent(
         "maps",
-        "Places search, drive time, geocoding (Google if key set, OSM fallback)",
+        "Places, drive times, geocoding",
+        capabilities=(
+            "Search places near a location, get drive time between two "
+            "addresses, geocode and reverse-geocode. Useful for 'how long to "
+            "Annie Gunn's?', 'find a coffee shop near the office', or planning "
+            "an evening route. Uses Google Maps when GOOGLE_MAPS_API_KEY is "
+            "set (better quality, costs money); falls back to free "
+            "OpenStreetMap (Nominatim + OSRM) otherwise."
+        ),
         env_vars=["GOOGLE_MAPS_API_KEY"],
         setup_url="https://console.cloud.google.com/apis/credentials",
         auth_help=(
@@ -83,7 +207,15 @@ SUBAGENTS: list[SubAgent] = [
     ),
     SubAgent(
         "eightsleep",
-        "Eight Sleep — last-night metrics + current bed state + set_temp",
+        "Eight Sleep — sleep metrics + bed temp",
+        capabilities=(
+            "Pulls last night's sleep score, HRV, resting heart rate, time "
+            "slept, and current bed-side temp; can also set temp by side. "
+            "The morning brief opens with a one-line sleep summary when this "
+            "is configured ('slept 7h22, HRV 48 — solid'). UNOFFICIAL API — "
+            "could break if Eight Sleep changes endpoints, but failures are "
+            "isolated so the rest of the agent keeps running."
+        ),
         env_vars=["EIGHT_EMAIL"],
         setup_url="https://www.eightsleep.com",
         auth_help=(
@@ -99,70 +231,140 @@ SUBAGENTS: list[SubAgent] = [
     SubAgent(
         "todoist",
         "Task management",
+        capabilities=(
+            "Capture tasks from any conversation ('remind me to call the "
+            "dentist'), list today / overdue / by project / by label, "
+            "complete from chat. Powers the 'top tasks' section of the "
+            "morning brief (with a hallucination-guard injected block so "
+            "the agent only surfaces real items) and the Sunday weekly "
+            "review's 'incomplete tasks last week' rollup."
+        ),
         env_vars=["TODOIST_API_KEY"],
         setup_url="https://todoist.com/app/settings/integrations/developer",
     ),
     SubAgent(
         "gmail",
-        "Read, search, draft, archive (NEVER sends)",
+        "Gmail — read, draft (NEVER sends)",
+        capabilities=(
+            "Read + search your inbox, draft replies, apply labels, archive "
+            "threads. NEVER sends — drafts only, same hard rule as Apple Mail. "
+            "Every email-triage decision in the morning brief flows through "
+            "here, and the agent recalls past 'alerted_email' facts when you "
+            "say 'draft a response to that one from Sarah.'"
+        ),
         needs_google_oauth=True,
         setup_url="https://console.cloud.google.com (enable Gmail API + create Desktop OAuth client)",
     ),
     SubAgent(
         "calendar",
-        "Read events, search, free/busy, create / update / delete",
+        "Google Calendar — read + write",
+        capabilities=(
+            "List today's events, search, check free/busy, and create / update "
+            "/ delete events. The morning brief opens with today's calendar; "
+            "the agent schedules events when you ask ('book Annie's at 6pm "
+            "Friday'). Reads multiple calendars."
+        ),
         needs_google_oauth=True,
         setup_url="https://console.cloud.google.com (enable Calendar API)",
     ),
     SubAgent(
         "drive",
-        "Search, browse, read text, create share link",
+        "Google Drive — search + read + share",
+        capabilities=(
+            "Search across your Drive, browse folders, read text-file content, "
+            "create shareable links. The agent can pull a contract or spec into "
+            "context ('what's in the Q3 plan doc?') or hand you a sharable link "
+            "without opening Drive."
+        ),
         needs_google_oauth=True,
         setup_url="https://console.cloud.google.com (enable Drive API)",
     ),
     SubAgent(
         "docs",
-        "Read, append, find-and-replace, create new docs",
+        "Google Docs — read, append, find-and-replace, create",
+        capabilities=(
+            "Read full document text, append paragraphs, find-and-replace, "
+            "create new docs. The agent can stash a meeting summary into a "
+            "long-running doc or draft a memo for you to polish."
+        ),
         needs_google_oauth=True,
         setup_url="https://console.cloud.google.com (enable Docs API)",
     ),
     SubAgent(
         "sheets",
-        "Read range, append rows, update range, create",
+        "Google Sheets — read + append + update + create",
+        capabilities=(
+            "Read a range, append rows, update specific cells, create new "
+            "sheets. Useful for 'log this expense to my tracker' or 'what's "
+            "this month's spend so far?' style flows."
+        ),
         needs_google_oauth=True,
         setup_url="https://console.cloud.google.com (enable Sheets API)",
     ),
     SubAgent(
         "notion",
-        "Search, read pages, query DBs, create + append",
+        "Notion — pages, DBs, append + create",
+        capabilities=(
+            "Search pages, read content, query databases, append to existing "
+            "pages, create new ones. The agent can stash conversation "
+            "summaries to a 'notes' database, pull project context into a "
+            "brief, or capture an idea to your inbox page. Each page or DB "
+            "must be explicitly shared with the integration in Notion."
+        ),
         env_vars=["NOTION_INTEGRATION_TOKEN"],
         setup_url="https://www.notion.so/profile/integrations",
         auth_help="Internal integration token. Also share each page/db with the integration.",
     ),
     SubAgent(
         "github",
-        "Repos, issues, PRs, search, create issue",
+        "GitHub — repos, issues, PRs",
+        capabilities=(
+            "Browse repos, list / read / create issues, list PRs, search code "
+            "across repos you have access to. Useful when the agent's helping "
+            "triage bug reports, recall what you shipped last week, or open a "
+            "quick issue from chat ('file a bug against frontend: login is "
+            "broken')."
+        ),
         env_vars=["GITHUB_TOKEN"],
         setup_url="https://github.com/settings/tokens",
         auth_help="Classic with `repo` scope OR fine-grained with Issues r+w / PRs r / Contents r / Metadata r.",
     ),
     SubAgent(
         "web",
-        "Brave Search + URL fetch",
+        "Web search (Brave) + URL fetch",
+        capabilities=(
+            "Search the live web + fetch the text contents of any URL. The "
+            "agent uses this for anything recent or specific that's outside "
+            "Claude's training data — current news, today's pricing, a "
+            "specific blog post you reference. Free tier covers 2K queries/mo."
+        ),
         env_vars=["BRAVE_SEARCH_API_KEY"],
         setup_url="https://api.search.brave.com",
         auth_help="Subscribe → Free tier (2K queries/month). Requires a credit card on file.",
     ),
     SubAgent(
         "youtube",
-        "Search + video/channel metadata (public read)",
+        "YouTube — search + metadata",
+        capabilities=(
+            "Search videos and channels, look up titles / view counts / "
+            "publish dates. Public-read only (no playback control, no "
+            "subscription management). Useful for 'find me a tutorial on X' "
+            "or 'what's the top video from <channel> this week.'"
+        ),
         env_vars=["YOUTUBE_API_KEY"],
         setup_url="https://console.cloud.google.com (enable YouTube Data API v3 → API key)",
         auth_help="Just an API key, NOT OAuth. Free quota: 10K units/day.",
     ),
     SubAgent(
         "dropbox",
-        "Search, list, read text, share-link",
+        "Dropbox — search, read, share",
+        capabilities=(
+            "Search filenames, list folders, read text-file contents, "
+            "generate share links. The agent can pull a document into "
+            "context ('what's in the contract from last week?') or hand "
+            "you a shareable link without opening the Dropbox app. Text-"
+            "file content only — no Word/PDF parsing in v1."
+        ),
         env_vars=["DROPBOX_APP_KEY", "DROPBOX_APP_SECRET"],
         setup_url="https://www.dropbox.com/developers/apps",
         auth_help=(
@@ -176,7 +378,14 @@ SUBAGENTS: list[SubAgent] = [
     ),
     SubAgent(
         "spotify",
-        "Search, playback, queue, playlists (Premium)",
+        "Spotify — search, playback, playlists",
+        capabilities=(
+            "Search tracks / albums / artists, queue and play music, manage "
+            "playlists, list devices. Useful for ambient requests like 'put "
+            "on focus music' or 'queue the playlist from last Friday.' "
+            "Playback control requires a Spotify Premium account. Coexists "
+            "with Apple Music — agent picks based on your phrasing."
+        ),
         env_vars=["SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"],
         setup_url="https://developer.spotify.com/dashboard",
         auth_help=(
@@ -188,7 +397,14 @@ SUBAGENTS: list[SubAgent] = [
     ),
     SubAgent(
         "canva",
-        "List, get, create, export designs + list folders",
+        "Canva — search, create, export designs",
+        capabilities=(
+            "Search your designs, fetch metadata, create new designs from "
+            "templates, export to PNG / PDF, manage folders. Useful when "
+            "you're iterating on visual content alongside the conversation "
+            "('whip up a quick poster for...'). Lower daily value than the "
+            "productivity integrations."
+        ),
         env_vars=["CANVA_CLIENT_ID", "CANVA_CLIENT_SECRET"],
         setup_url="https://developer.canva.com",
         auth_help=(
@@ -203,7 +419,14 @@ SUBAGENTS: list[SubAgent] = [
     ),
     SubAgent(
         "linkedin",
-        "Get profile + create text posts (narrow personal API surface)",
+        "LinkedIn — profile + text posts (narrow)",
+        capabilities=(
+            "Read your own profile + post short text updates. Narrow API "
+            "surface — most useful endpoints (search, company pages, full "
+            "feed) are restricted to Marketing/Talent partner apps that "
+            "personal accounts can't access. Skip unless you specifically "
+            "want 'post my draft to LinkedIn' as a workflow."
+        ),
         env_vars=["LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET"],
         setup_url="https://www.linkedin.com/developers/apps",
         auth_help=(
