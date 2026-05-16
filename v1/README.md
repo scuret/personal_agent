@@ -372,14 +372,27 @@ v1/
 
 ## Setup
 
+The fastest path is the **guided web install wizard** at
+[`http://127.0.0.1:8780/wizard`](http://127.0.0.1:8780/wizard). It walks
+through every step in a browser with provider-specific screenshots, inline
+help, and "verify" buttons that confirm each piece works before you move on.
+
+Detailed per-provider walkthroughs (including click paths for Google Cloud,
+Twilio, Slack, Discord, Dropbox, Spotify, etc.) live in
+[**SETUP.md**](../SETUP.md). The wizard deep-links into the relevant
+section as you reach each step.
+
 ### Quick start (recommended)
 
-For a guided setup that walks through everything — venv + deps + sub-agent selection + API keys + Google OAuth + iMessage relay + LaunchAgents — run:
+For a fresh install:
 
 ```bash
 cd v1
 ./install.sh
 ```
+
+The shell wrapper does the Python-dep + venv bootstrap, then starts the
+web UI. Open <http://127.0.0.1:8780/wizard> and walk through the steps.
 
 The installer is **idempotent** — re-run anytime to add new sub-agents,
 update keys, or reconfigure parts. Existing values are preserved unless
