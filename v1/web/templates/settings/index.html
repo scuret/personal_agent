@@ -15,7 +15,7 @@
 <div class="flex items-baseline justify-between mb-6">
     <h1 class="text-2xl font-semibold">settings</h1>
     <div class="text-xs text-zinc-500 flex items-baseline gap-4">
-        <a href="/wizard" class="text-sky-400 hover:text-sky-300">re-run install wizard →</a>
+        <a href="/wizard?restart=1" class="text-sky-400 hover:text-sky-300">re-run install wizard →</a>
         <span>{{ subagents | selectattr('connected') | list | length }} / {{ subagents | length }} sub-agents connected</span>
     </div>
 </div>

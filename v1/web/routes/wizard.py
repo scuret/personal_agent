@@ -261,14 +261,15 @@ def _next_step(current: str, env: dict[str, str], progress: dict[str, Any]) -> s
 
 
 def _earliest_unmet_step(env: dict[str, str], progress: dict[str, Any]) -> str:
-    # Fast path for "this install was already configured before the
-    # wizard existed" — if the user has an ANTHROPIC_API_KEY in .env
-    # AND never opened the wizard before, they implicitly already
-    # made the cost/privacy decisions when they installed. Skip
-    # straight to done so we don't force them to re-acknowledge.
-    if (env.get("ANTHROPIC_API_KEY") or "").strip() and not progress.get(
-        "acknowledged_disclosure"
-    ):
+    # Fast path for the "I configured via CLI before the wizard
+    # existed and just clicked the dashboard's wizard link" case.
+    # Only triggers on the very first visit to /wizard (no
+    # .install_progress.json on disk yet) AND only when ANTHROPIC_
+    # API_KEY is already in .env. Once the user has interacted with
+    # the wizard at all (welcome ack, restart=1, anything that
+    # writes the progress file) this branch is permanently off, so
+    # mid-walk refreshes don't yank the user back to done.
+    if not PROGRESS_PATH.exists() and (env.get("ANTHROPIC_API_KEY") or "").strip():
         return "done"
 
     for s in STEPS:
@@ -316,11 +317,28 @@ def _step_context(step: WizardStep, env: dict[str, str], progress: dict[str, Any
 
 @router.get("", response_class=HTMLResponse, response_model=None)
 async def index(request: Request):
-    """Redirect to the earliest unmet step."""
-    env = read_env_dict()
+    """Redirect to the earliest unmet step.
+
+    `?restart=1` (or `?force=1`) explicitly starts the wizard over —
+    clears completed_at + acknowledged_disclosure so the user walks
+    from the welcome screen. Existing `.env` values are kept and pre-
+    populated in each step's form. Used by the "re-run install
+    wizard" link on `/settings`.
+    """
+    restart = request.query_params.get("restart") or request.query_params.get("force")
+    if restart in ("1", "true", "yes"):
+        _write_progress({
+            "completed_at": None,
+            "acknowledged_disclosure": False,
+            "skipped_steps": [],
+            "subagents_configure_index": 0,
+        })
+        return RedirectResponse("/wizard/welcome", status_code=303)
+
     progress = _read_progress()
     if progress.get("completed_at"):
         return RedirectResponse("/", status_code=303)
+    env = read_env_dict()
     target = _earliest_unmet_step(env, progress)
     return RedirectResponse(f"/wizard/{target}", status_code=303)
 
