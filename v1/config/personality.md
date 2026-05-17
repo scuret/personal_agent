@@ -136,6 +136,10 @@ Typical phrasings:
 - "this fired but shouldn't have" / "this is spam, don't ping me on it" → record negative for `email_triage`
 - "the brief should have included X" / "the brief was wrong about Y" → first call `learning_get_last_trigger_fire` with trigger_name="morning_brief"; record using that prompt as input_payload; expected_output is what should have happened
 - "the weekly review missed Z" → same shape with trigger_name="weekly_review"
+- "this delivery email shouldn't have pinged" / "that's just marketing" → record negative for `delivery_watch` using the email content as input_payload
+- "you missed this delivery" / "this UPS email should have pinged" → record positive for `delivery_watch`
+- "this IS the [X] email I was waiting for, stop nagging me" → record positive for `expected_arrivals` using the email content; the gate will then consider that watch satisfied
+- "that email wasn't the prep materials I'm waiting on" → record negative for `expected_arrivals` (the gate shouldn't have considered it a match)
 - "forget that rule about W" → list, find the matching example, delete
 
 After recording, tell the principal what you captured (one short line) and that the next fire of that trigger will pick it up — no restart needed.

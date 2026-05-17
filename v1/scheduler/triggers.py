@@ -634,6 +634,156 @@ def _triage_email_with_haiku(
     return _parse_triage_output(out)
 
 
+# Hard cap on the Haiku decision-gate output. Yes/no + a short reason +
+# at most a few extracted fields = small.
+_GATE_MAX_TOKENS = 150
+
+
+def _haiku_decision_gate(
+    *,
+    trigger_name: str,
+    question: str,
+    email: dict[str, Any],
+    body: str,
+    store: MemoryStore,
+    bias: str = "no",
+    extra_output_keys: list[tuple[str, str]] | None = None,
+) -> dict[str, str]:
+    """One-shot Haiku gate for a pattern-matched email candidate.
+
+    Both `delivery_watch` and `expected_arrivals` use this: a cheap
+    string-match pre-filter narrows the candidate set, then this gate
+    asks Haiku "is this actually a real match?" with the trigger's
+    accumulated few-shot examples injected from `trigger_examples`.
+
+    Args:
+      trigger_name: Must be in `MemoryStore.TRIGGER_NAMES`. Used to look
+        up the examples block.
+      question: Plain-English yes/no question for the gate
+        (e.g. "Is this a real delivery notification about a package
+        coming to the user?").
+      email: dict with at least `from`, `subject`, `date`.
+      body: pre-fetched plain-text email body (already truncated by the
+        caller if necessary).
+      bias: 'yes' or 'no' — the default verdict when the email is
+        ambiguous. The prompt explicitly tells the model to lean this
+        way. Examples can override.
+      extra_output_keys: optional [(KEY, description), ...] tuples for
+        additional fields the gate should extract. e.g.
+        [("CARRIER", "one of UPS/FedEx/Amazon/USPS/DHL/OTHER"),
+         ("TRACKING", "tracking number, or empty"),
+         ("TRACKING_URL", "best-guess tracking URL, or empty")].
+
+    Returns:
+      {"verdict": "yes"|"no", "reason": "<one-liner>", "<key_lc>": "..."}.
+      On any failure (no body, Haiku error, malformed output), returns
+      {"verdict": "no", "reason": "gate-failed: <why>", ...empty keys}.
+      The conservative "no" default biases away from spurious actions.
+    """
+    body_capped = (body or "").strip()[:_SUMMARIZER_MAX_BODY_CHARS]
+    if not body_capped:
+        return _gate_failure("no body to evaluate", extra_output_keys)
+
+    # Late import — same pattern as _triage_email_with_haiku, keeps
+    # daemon-startup imports lean and avoids any circular risk.
+    from scheduler.trigger_prompts import render_examples_block
+    examples_block = render_examples_block(trigger_name, store)
+
+    # Build the extra-output-keys instructions for both prompt + parser.
+    extra_lines_prompt: list[str] = []
+    if extra_output_keys:
+        for key, desc in extra_output_keys:
+            extra_lines_prompt.append(f"{key}: <{desc}>")
+
+    output_format = "VERDICT: yes | no\nREASON: <one-line explanation>"
+    if extra_lines_prompt:
+        output_format += "\n" + "\n".join(extra_lines_prompt)
+
+    prompt = (
+        examples_block
+        + f"You are a {trigger_name} gate for one user. A cheap pattern "
+        + "match has flagged the email below as a candidate. Your job is "
+        + "to make the final yes/no call.\n\n"
+        + f"Question: {question}\n\n"
+        + f"Bias toward {bias.upper()} when ambiguous — false-{bias.upper()} "
+        + f"is the safer error mode here. Past corrections (if any are "
+        + "above) override this bias.\n\n"
+        + "Output format — strict:\n"
+        + output_format
+        + "\n\nDo not add preamble, postamble, or any other content "
+        + "outside this format.\n\n"
+        + "--- EMAIL ---\n"
+        + f"From: {email.get('from', '')}\n"
+        + f"Subject: {email.get('subject') or '(no subject)'}\n"
+        + f"Date: {email.get('date', '')}\n\n"
+        + body_capped
+    )
+
+    try:
+        import anthropic  # late import — keep daemon-startup lean
+
+        client = anthropic.Anthropic()
+        resp = client.messages.create(
+            model=_SUMMARIZER_MODEL,
+            max_tokens=_GATE_MAX_TOKENS,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        out = "".join(
+            b.text for b in resp.content if getattr(b, "type", "") == "text"
+        ).strip()
+    except Exception as e:  # noqa: BLE001
+        print(f"[{trigger_name}] gate call failed: {e}", file=sys.stderr)
+        return _gate_failure(f"haiku-error: {type(e).__name__}", extra_output_keys)
+
+    return _parse_gate_output(out, extra_output_keys)
+
+
+def _gate_failure(
+    reason: str, extra_output_keys: list[tuple[str, str]] | None
+) -> dict[str, str]:
+    """Build the failure-shaped return so callers don't need to special-case."""
+    out: dict[str, str] = {"verdict": "no", "reason": f"gate-failed: {reason}"}
+    if extra_output_keys:
+        for key, _ in extra_output_keys:
+            out[key.lower()] = ""
+    return out
+
+
+def _parse_gate_output(
+    out: str, extra_output_keys: list[tuple[str, str]] | None
+) -> dict[str, str]:
+    """Parse the VERDICT/REASON/<extra-keys> protocol used by _haiku_decision_gate.
+
+    Tolerant of stray whitespace and casing. Missing or malformed VERDICT
+    falls back to 'no' so the caller's bias-toward-skip default holds.
+    """
+    parsed: dict[str, str] = {"verdict": "no", "reason": ""}
+    if extra_output_keys:
+        for key, _ in extra_output_keys:
+            parsed[key.lower()] = ""
+
+    # Build the recognized-keys lookup for case-insensitive matching.
+    recognized: dict[str, str] = {"VERDICT": "verdict", "REASON": "reason"}
+    if extra_output_keys:
+        for key, _ in extra_output_keys:
+            recognized[key.upper()] = key.lower()
+
+    for raw in (out or "").splitlines():
+        s = raw.strip()
+        if not s or ":" not in s:
+            continue
+        head, _, value = s.partition(":")
+        key_norm = head.strip().upper()
+        if key_norm in recognized:
+            parsed[recognized[key_norm]] = value.strip()
+
+    # Normalize verdict to literal "yes"|"no". Anything else (or empty)
+    # becomes "no" so we don't accidentally flag on ambiguous output.
+    v = parsed["verdict"].strip().lower()
+    parsed["verdict"] = "yes" if v.startswith("yes") else "no"
+    return parsed
+
+
 def _parse_triage_output(out: str) -> dict[str, Any]:
     """Parse the ALERT:/ITEM: protocol used by _triage_email_with_haiku.
 
@@ -999,17 +1149,66 @@ def _fire_delivery_watch(store: MemoryStore, config: dict[str, Any], now: dateti
     if not flagged:
         return
 
-    # For each flagged email, fetch its body and extract a tracking number
-    # + URL. Done once here so both the alert and the logged fact share
-    # the same tracking data. Failures don't block the alert path.
-    enriched: list[dict[str, Any]] = []
+    # Phase 2 — LLM gate. The carrier+keyword pre-filter is cheap and
+    # broad; this Haiku gate is the precision pass. Catches marketing
+    # emails that mention "out for delivery" without actually being a
+    # delivery, surveys, account notices, etc. Learns from user
+    # corrections via the `delivery_watch` trigger_examples bank.
+    gate_extra_keys = [
+        ("CARRIER", "one of UPS, FedEx, Amazon, USPS, DHL, OTHER"),
+        ("TRACKING", "tracking number found in the email body, or empty"),
+        ("TRACKING_URL", "the carrier's tracking URL for this shipment, or empty"),
+    ]
+    confirmed: list[tuple[dict[str, Any], str, dict[str, str]]] = []
     for email, reason in flagged:
-        carrier = _carrier_label(email["from"])
         body = _fetch_email_body(email["id"])
-        # Search body + subject so we don't miss tracking numbers that
-        # only appear in the subject line.
-        search_text = body + " " + (email.get("subject") or "")
-        tracking, url = _extract_tracking(carrier, search_text)
+        gate = _haiku_decision_gate(
+            trigger_name="delivery_watch",
+            question=(
+                "Is this a real delivery notification about a package coming "
+                "to the user (or someone in their household), AND meaningful "
+                "enough to interrupt them about right now? Examples that "
+                "should be NO: marketing/promotional emails that mention "
+                "shipping, generic 'order confirmed' receipts, customs/duty "
+                "notices for shipments weeks out, surveys/feedback requests."
+            ),
+            email=email,
+            body=body,
+            store=store,
+            bias="no",
+            extra_output_keys=gate_extra_keys,
+        )
+        if gate.get("verdict") != "yes":
+            print(
+                f"[delivery_watch] gate skipped {email['id']}: "
+                f"{gate.get('reason', '')!r}"
+            )
+            continue
+        confirmed.append((email, reason, gate))
+
+    if not confirmed:
+        return
+
+    # For each confirmed email, build the enriched record. Prefer the
+    # gate's extracted CARRIER/TRACKING/TRACKING_URL when populated;
+    # fall back to the regex extractor on misses so the legacy path
+    # still works when the gate can't find the data.
+    enriched: list[dict[str, Any]] = []
+    for email, reason, gate in confirmed:
+        carrier_gate = (gate.get("carrier") or "").strip()
+        carrier = (
+            carrier_gate
+            if carrier_gate and carrier_gate.upper() != "OTHER"
+            else _carrier_label(email["from"])
+        )
+        tracking_gate = (gate.get("tracking") or "").strip()
+        url_gate = (gate.get("tracking_url") or "").strip()
+        if tracking_gate or url_gate:
+            tracking, url = tracking_gate, url_gate
+        else:
+            body = _fetch_email_body(email["id"])
+            search_text = body + " " + (email.get("subject") or "")
+            tracking, url = _extract_tracking(carrier, search_text)
         enriched.append({
             "email": email,
             "reason": reason,
@@ -1085,16 +1284,19 @@ _EXPECTED_ARRIVALS_LAST_CHECK_KEY = "expected_arrivals_last_check"
 _EXPECTED_ARRIVALS_LAST_PING_PREFIX = "expected_arrivals_last_ping:"
 
 
-def _expected_arrival_already_received(
+def _find_expected_arrival_candidates(
     expected_sender: str,
     expected_subject: str,
     since_dt: datetime,
-) -> bool:
-    """True if Gmail has any message matching the watch criteria since
-    `since_dt`. Looks in inbox + archived (excludes spam/trash by default).
+    max_results: int = 5,
+) -> list[dict[str, Any]]:
+    """Return up to N candidate emails matching the watch criteria since
+    `since_dt`. Each result has `id`, `from`, `subject`, `date`, `snippet`.
 
-    On any error returns False — we'd rather false-positive ping the user
-    than silently skip a real gap.
+    Pre-filter for the LLM gate — the Gmail `from:` + `subject:` query is
+    the cheap broad pass; Phase 2's gate then judges whether any of the
+    candidates is the real expected arrival. On any error returns [] so
+    the caller defaults to "not yet received" and pings.
     """
     from mcp_servers.google_auth import build_service  # late import
 
@@ -1102,7 +1304,7 @@ def _expected_arrival_already_received(
         svc = build_service("gmail", "v1")
     except Exception as e:  # noqa: BLE001
         print(f"[expected_arrivals] gmail service init failed: {e}", file=sys.stderr)
-        return False
+        return []
 
     since_str = since_dt.strftime("%Y/%m/%d")
     parts = [f"after:{since_str}", f"from:{expected_sender}"]
@@ -1115,13 +1317,36 @@ def _expected_arrival_already_received(
         resp = (
             svc.users()
             .messages()
-            .list(userId="me", q=query, maxResults=1)
+            .list(userId="me", q=query, maxResults=max_results)
             .execute()
         )
     except Exception as e:  # noqa: BLE001
         print(f"[expected_arrivals] gmail query failed: {e}", file=sys.stderr)
-        return False
-    return bool(resp.get("messages"))
+        return []
+
+    msgs = resp.get("messages") or []
+    out: list[dict[str, Any]] = []
+    for m in msgs:
+        try:
+            detail = (
+                svc.users()
+                .messages()
+                .get(userId="me", id=m["id"], format="metadata",
+                     metadataHeaders=["From", "Subject", "Date"])
+                .execute()
+            )
+        except Exception as e:  # noqa: BLE001
+            print(f"[expected_arrivals] gmail get failed: {e}", file=sys.stderr)
+            continue
+        headers = {h["name"]: h["value"] for h in (detail.get("payload", {}).get("headers") or [])}
+        out.append({
+            "id": m["id"],
+            "from": headers.get("From", ""),
+            "subject": headers.get("Subject", ""),
+            "date": headers.get("Date", ""),
+            "snippet": detail.get("snippet") or "",
+        })
+    return out
 
 
 def _format_expected_arrival_alert(
@@ -1246,9 +1471,49 @@ def _fire_expected_arrivals(
         since_dt = datetime.combine(
             event_date, dtime(0, 0), tzinfo=tz
         ) - timedelta(days=lead_time)
-        if _expected_arrival_already_received(
+        candidates = _find_expected_arrival_candidates(
             expected_sender, expected_subject, since_dt
-        ):
+        )
+
+        # Phase 2 — LLM gate. The Gmail `from:` + `subject:` filter is
+        # the broad pre-filter; Haiku decides whether any candidate is
+        # the actual email we're waiting for (vs. a marketing email,
+        # an unrelated thread reply, a re-send from last year, etc.).
+        # If at least one candidate passes, the watch is considered
+        # satisfied and we don't ping. With zero candidates the gate
+        # never runs and we ping as the original logic intended.
+        confirmed_received = False
+        if candidates:
+            for cand in candidates:
+                body = _fetch_email_body(cand["id"])
+                gate = _haiku_decision_gate(
+                    trigger_name="expected_arrivals",
+                    question=(
+                        f"Is this email the one the user has been waiting "
+                        f"for about '{name}' (event date {event_date_str}, "
+                        f"expected from {expected_sender}, expected subject "
+                        f"contains {expected_subject!r})? YES only when "
+                        f"this is clearly the actual expected materials / "
+                        f"prep / notice — not a thread reply, marketing "
+                        f"email, or unrelated message from the same sender."
+                    ),
+                    email=cand,
+                    body=body,
+                    store=store,
+                    bias="no",  # bias toward "not received" so we keep gap-detecting
+                )
+                if gate.get("verdict") == "yes":
+                    confirmed_received = True
+                    print(
+                        f"[expected_arrivals] gate confirmed receipt for "
+                        f"{name!r}: {gate.get('reason', '')!r}"
+                    )
+                    break
+                print(
+                    f"[expected_arrivals] gate rejected candidate "
+                    f"{cand['id']} for {name!r}: {gate.get('reason', '')!r}"
+                )
+        if confirmed_received:
             continue
 
         event_dt = datetime.combine(event_date, dtime(0, 0), tzinfo=tz)

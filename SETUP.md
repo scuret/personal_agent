@@ -721,19 +721,30 @@ your phone won't resolve — that's intentional).
 
 ### Teach triggers when they get it wrong
 
-Three triggers can learn from your corrections in v1: email triage, the
-morning brief, the Sunday weekly review. (Delivery watch + expected
-arrivals are pattern-matching today and don't have a learning hook yet.)
+All five triggers can learn from your corrections: email triage, the
+morning brief, the Sunday weekly review, delivery watch, and expected
+arrivals. For the latter two the LLM only runs on candidates the
+existing pattern match flags — string filter narrows the set, then
+Haiku decides if it's real and learns from your corrections.
 
 Phrasings the agent maps to corrections:
 
-- *"this email should have pinged me [forward]"* → records a positive
-  example for email triage
+- *"this email should have pinged me [forward]"* → positive example
+  for `email_triage`
 - *"this fired but shouldn't have"* / *"don't ping me on these"* →
-  records a negative example for email triage
+  negative example for `email_triage`
 - *"the morning brief should have included X"* /
-  *"the brief was wrong about Y"* → records a brief correction
-  (the agent fetches the last fire's prompt automatically)
+  *"the brief was wrong about Y"* → brief correction (agent fetches
+  the last fire's prompt automatically)
+- *"the weekly review missed Z"* → same shape, weekly_review
+- *"this delivery email shouldn't have pinged"* / *"that's just
+  marketing"* → negative example for `delivery_watch`
+- *"you missed this delivery"* → positive example for `delivery_watch`
+- *"this IS the [X] email I was waiting for"* → positive example
+  for `expected_arrivals` (stops the gap-detect ping)
+- *"that email wasn't the prep materials I'm waiting on"* →
+  negative example for `expected_arrivals` (the gate shouldn't have
+  counted it)
 - *"forget that rule about X"* → soft-deletes the matching example
 
 Corrections take effect on the next fire of that trigger — no restart
