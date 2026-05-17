@@ -33,6 +33,8 @@ import requests
 from claude_agent_sdk import create_sdk_mcp_server, tool
 from claude_agent_sdk.types import McpSdkServerConfig
 
+from mcp_servers._untrusted import wrap_untrusted
+
 REDDIT_BASE = "https://www.reddit.com"
 TIMEOUT_S = 12
 
@@ -144,7 +146,10 @@ def create_reddit_mcp_server() -> McpSdkServerConfig:
         posts = _children(data)
         if not posts:
             return _ok(f"(no posts in r/{sub} for that time range)")
-        return _ok("\n\n".join(_format_post(p) for p in posts))
+        return _ok(wrap_untrusted(
+            f"Reddit top posts in r/{sub}",
+            "\n\n".join(_format_post(p) for p in posts),
+        ))
 
     @tool(
         "reddit_subreddit_hot",
@@ -170,7 +175,10 @@ def create_reddit_mcp_server() -> McpSdkServerConfig:
         posts = _children(data)
         if not posts:
             return _ok(f"(no hot posts in r/{sub})")
-        return _ok("\n\n".join(_format_post(p) for p in posts))
+        return _ok(wrap_untrusted(
+            f"Reddit hot posts in r/{sub}",
+            "\n\n".join(_format_post(p) for p in posts),
+        ))
 
     @tool(
         "reddit_search",
@@ -203,7 +211,11 @@ def create_reddit_mcp_server() -> McpSdkServerConfig:
         posts = _children(data)
         if not posts:
             return _ok("(no matches)")
-        return _ok("\n\n".join(_format_post(p) for p in posts))
+        scope = f"r/{sub}" if sub else "site-wide"
+        return _ok(wrap_untrusted(
+            f"Reddit search results ({scope}) for query={args['query']!r}",
+            "\n\n".join(_format_post(p) for p in posts),
+        ))
 
     @tool(
         "reddit_get_post",
@@ -249,9 +261,14 @@ def create_reddit_mcp_server() -> McpSdkServerConfig:
         comments = [c for c in comments if c.get("body")]
         body_block = _format_post(post)
         if not comments:
-            return _ok(body_block + "\n\n(no comments yet)")
+            return _ok(wrap_untrusted(
+                f"Reddit post r/{sub}/{pid}", body_block + "\n\n(no comments yet)"
+            ))
         comment_lines = "\n".join(_format_comment(c) for c in comments)
-        return _ok(f"{body_block}\n\n--- top comments ---\n{comment_lines}")
+        return _ok(wrap_untrusted(
+            f"Reddit post r/{sub}/{pid} + top comments",
+            f"{body_block}\n\n--- top comments ---\n{comment_lines}",
+        ))
 
     return create_sdk_mcp_server(
         name="reddit",

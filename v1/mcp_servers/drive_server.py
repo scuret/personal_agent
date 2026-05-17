@@ -36,6 +36,7 @@ from claude_agent_sdk import create_sdk_mcp_server, tool
 from claude_agent_sdk.types import McpSdkServerConfig
 from googleapiclient.errors import HttpError
 
+from mcp_servers._untrusted import wrap_untrusted
 from mcp_servers.google_auth import build_service
 
 
@@ -274,7 +275,13 @@ def create_drive_mcp_server() -> McpSdkServerConfig:
         cap = int(args.get("max_chars", 50000))
         if len(text) > cap:
             text = text[:cap] + f"\n\n[truncated at {cap} chars]"
-        return _ok(f"name: {meta.get('name', '')}\nmime: {mime}\n\n{text}")
+        # Drive files may be authored by anyone the file was shared
+        # with — treat content as untrusted.
+        name = meta.get("name", "")
+        return _ok(
+            f"name: {name}\nmime: {mime}\n\n"
+            + wrap_untrusted(f"Google Drive file {name!r} (mime {mime})", text)
+        )
 
     @tool(
         "drive_create_share_link",

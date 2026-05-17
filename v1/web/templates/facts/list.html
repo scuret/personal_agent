@@ -30,6 +30,44 @@
     </details>
 </div>
 
+{% if recent %}
+<section class="mb-8 rounded-lg border border-amber-700/40 bg-amber-950/20 p-4">
+    <div class="flex items-baseline justify-between mb-2">
+        <h2 class="text-sm font-semibold text-amber-300">📋 review queue · last 24h</h2>
+        <span class="text-xs text-zinc-500">{{ recent|length }} fact{% if recent|length != 1 %}s{% endif %} learned recently</span>
+    </div>
+    <p class="text-xs text-zinc-400 mb-3">
+        Facts the agent logged from chat in the last 24 hours. Scan for anything you didn't actually ask it to remember — that's a sign an injected instruction in an email body or web page convinced the agent to log something.
+    </p>
+    <ul class="divide-y divide-amber-900/40 border border-amber-900/30 rounded-lg overflow-hidden">
+        {% for f in recent %}
+        <li class="px-4 py-3 bg-zinc-950/40 flex items-start justify-between gap-3 {% if not f.is_active %}opacity-60{% endif %}">
+            <div class="flex-1 min-w-0">
+                <div class="text-sm">{{ f.content }}</div>
+                <div class="mt-1 text-xs text-zinc-500 flex gap-3 flex-wrap">
+                    <span class="mono">#{{ f.id }}</span>
+                    <span>[{{ f.category }}]</span>
+                    <span>logged: {{ f.created_at[:19] }}</span>
+                    {% if f.source_conversation_id %}
+                    <a href="/conversations/{{ f.source_conversation_id }}" class="text-sky-400 hover:text-sky-300">source chat →</a>
+                    {% else %}
+                    <span class="text-zinc-600">(no source chat)</span>
+                    {% endif %}
+                    {% if not f.is_active %}<span class="text-amber-400">deactivated</span>{% endif %}
+                </div>
+            </div>
+            {% if f.is_active %}
+            <form method="post" action="/facts/{{ f.id }}/deactivate"
+                  onsubmit="return confirm('Deactivate fact #{{ f.id }}? It stops injecting into the system prompt.');">
+                <button class="text-xs text-zinc-500 hover:text-rose-400">deactivate</button>
+            </form>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+</section>
+{% endif %}
+
 {% if by_category %}
 <div class="space-y-6">
     {% for category, facts in by_category.items() %}

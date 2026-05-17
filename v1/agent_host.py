@@ -25,12 +25,32 @@ Two key Claude Agent SDK primitives at play:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import os
 import sys
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
+
+# Thread the current conversation_id through async tasks so MCP tools
+# (memory_log_fact in particular) can stamp source_conversation_id
+# without callers having to plumb it via tool args. ContextVar = each
+# asyncio Task gets its own copy, safe under concurrent process_turn
+# calls. Set by process_turn / process_turn_stream at turn start; read
+# by mcp_servers/memory_server.py:memory_log_fact via the helper below.
+_current_conversation_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "current_conversation_id", default=None
+)
+
+
+def _set_current_conversation_id(conversation_id: str | None) -> None:
+    _current_conversation_id.set(conversation_id)
+
+
+def get_current_conversation_id() -> str | None:
+    """Read by MCP tools that need to stamp the source conversation."""
+    return _current_conversation_id.get()
 
 # Load .env before importing the SDK so ANTHROPIC_API_KEY is in place.
 load_dotenv()
@@ -425,31 +445,151 @@ def _has_linkedin_oauth() -> bool:
 
 # ─── Safety hooks ───────────────────────────────────────────────────────────
 #
-# Belt-and-suspenders: even though we never expose a send-shaped tool, this
-# PreToolUse hook denies any tool call whose name contains "send" (case-
-# insensitive). Triple defense alongside the system prompt and the absent
-# tool surface. Returns the SDK's "deny" decision shape:
-#   { "hookSpecificOutput": { ... permissionDecision: "deny" ... } }
+# Tiered destructive-action gate. Replaces the older substring-match
+# "send"-blocker (which left lots of write-shaped tools like
+# gmail_create_draft / drive_create_share_link / linkedin_post_share
+# bypassable by prompt injection from an email body during the
+# morning brief). Two tiers:
+#
+#   ALWAYS_DENIED         — never callable, no agent ever needs these
+#                           in v1; they're high-impact-low-recovery
+#                           (a public Drive link, a LinkedIn post)
+#                           and the injected-email exfiltration risk
+#                           outweighs the (zero) automation value.
+#   AUTOMATED_DENIED      — callable in interactive chat (relay, web
+#                           chat) but blocked when the agent is
+#                           running a scheduled trigger (morning
+#                           brief, weekly review). These are write
+#                           tools that have legitimate interactive
+#                           uses ("draft a reply to X", "create a
+#                           calendar event") but no business firing
+#                           from a brief.
+#
+# The mode flag rides on the AGENT_RUNTIME_MODE env var. Relays and
+# the web chat surface leave it unset (default "interactive");
+# scheduler/triggers.py:_fire_trigger sets it to "automated_trigger"
+# around each SDK session and clears it after.
+#
+# Belt-and-suspenders kept: the original `"send" in name` substring
+# check still fires too. If a new sub-agent ever exposes a literal
+# `*_send_*`-named tool by mistake, it'll still be blocked.
+
+# Always-denied tools — no recovery path if these go wrong:
+#   drive_create_share_link: turns a private file public, no undo
+#   linkedin_post_share:     posts to the principal's audience
+ALWAYS_DENIED_TOOLS = frozenset({
+    "mcp__drive__drive_create_share_link",
+    "mcp__linkedin__linkedin_post_share",
+})
+
+# Write-shaped tools blocked during scheduled triggers. Interactive
+# chat callers (relay, /chat) can still call these. Anything that
+# creates, drafts, or modifies user-visible state in a third-party
+# system belongs here.
+AUTOMATED_DENIED_TOOLS = frozenset({
+    # Gmail / Apple Mail
+    "mcp__gmail__gmail_create_draft",
+    "mcp__mail_apple__mail_apple_draft_reply",
+    "mcp__mail_apple__mail_apple_draft_new",
+    # Calendar (read is fine, write isn't from a brief)
+    "mcp__calendar__calendar_create_event",
+    "mcp__calendar__calendar_update_event",
+    "mcp__calendar__calendar_delete_event",
+    # Google Docs / Sheets
+    "mcp__docs__docs_create",
+    "mcp__docs__docs_append_text",
+    "mcp__docs__docs_replace_text",
+    "mcp__sheets__sheets_create",
+    "mcp__sheets__sheets_append_rows",
+    "mcp__sheets__sheets_update_range",
+    # Notion
+    "mcp__notion__notion_create_page",
+    "mcp__notion__notion_append_text",
+    # Canva
+    "mcp__canva__canva_create_design",
+    "mcp__canva__canva_export_design",
+    # GitHub
+    "mcp__github__github_create_issue",
+    # Todoist write
+    "mcp__todoist__todoist_create_task",
+    "mcp__todoist__todoist_update_task",
+    "mcp__todoist__todoist_complete_task",
+    # Spotify playback / library mutations
+    "mcp__spotify__spotify_play",
+    "mcp__spotify__spotify_pause",
+    "mcp__spotify__spotify_queue",
+    # Apple-native write
+    "mcp__reminders_apple__reminders_apple_create",
+    "mcp__reminders_apple__reminders_apple_complete",
+    "mcp__reminders_apple__reminders_apple_delete",
+    "mcp__notes_apple__notes_apple_append",
+    "mcp__notes_apple__notes_apple_create",
+    "mcp__music_apple__music_apple_play",
+    "mcp__music_apple__music_apple_pause",
+    "mcp__music_apple__music_apple_next",
+    "mcp__music_apple__music_apple_previous",
+    "mcp__music_apple__music_apple_search_and_play",
+})
 
 
-async def _block_send_tools(
+def _runtime_mode() -> str:
+    """One of: 'interactive' (default, relay + web chat) or
+    'automated_trigger' (scheduler-driven brief / review). Read fresh
+    on every hook call so flipping it from scheduler.triggers._fire_trigger
+    takes effect for the next tool call without restarting the SDK
+    client.
+    """
+    return (os.environ.get("AGENT_RUNTIME_MODE") or "interactive").strip().lower()
+
+
+async def _destructive_action_gate(
     input_data: PreToolUseHookInput,
     _tool_use_id: str | None,
     _context: HookContext,
 ) -> dict[str, Any]:
     name = input_data.get("tool_name", "") if isinstance(input_data, dict) else getattr(input_data, "tool_name", "")
-    if "send" in (name or "").lower():
-        return {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": (
-                    f"tool '{name}' blocked by no-auto-send invariant. "
-                    "drafts must go to Gmail Drafts; the principal sends manually."
-                ),
-            }
-        }
+    name = (name or "")
+    name_lc = name.lower()
+
+    if name in ALWAYS_DENIED_TOOLS:
+        return _deny(name, (
+            f"tool '{name}' is permanently denied (high-impact, no-recovery "
+            f"action — public share link / public post). If you need this "
+            f"behavior, ask the principal to do it manually."
+        ))
+
+    if _runtime_mode() == "automated_trigger" and name in AUTOMATED_DENIED_TOOLS:
+        return _deny(name, (
+            f"tool '{name}' is blocked during automated triggers (morning "
+            f"brief, weekly review). This prevents prompt injection in an "
+            f"email body from drafting an exfil reply or creating spurious "
+            f"records. If the principal needs this, they'll ask in chat."
+        ))
+
+    # Legacy substring guard — kept as defense-in-depth in case a future
+    # sub-agent exposes a literal `*send*`-named tool by mistake.
+    if "send" in name_lc:
+        return _deny(name, (
+            f"tool '{name}' blocked by no-auto-send invariant. drafts must "
+            f"go to Gmail Drafts; the principal sends manually."
+        ))
+
     return {}
+
+
+def _deny(tool_name: str, reason: str) -> dict[str, Any]:
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+# Back-compat alias — the matcher list in build_options below references
+# this name. Kept in case any external caller imports it.
+_block_send_tools = _destructive_action_gate
 
 
 def build_options(store: MemoryStore, model: str | None = None) -> ClaudeAgentOptions:
@@ -557,7 +697,7 @@ def build_options(store: MemoryStore, model: str | None = None) -> ClaudeAgentOp
         # Safety hook: deny anything with "send" in the tool name. The
         # matcher=".*" runs the hook on every tool call regardless of name.
         hooks={
-            "PreToolUse": [HookMatcher(matcher=".*", hooks=[_block_send_tools])],
+            "PreToolUse": [HookMatcher(matcher=".*", hooks=[_destructive_action_gate])],
         },
     )
 
@@ -599,6 +739,11 @@ async def process_turn(
     own reply (role='assistant') is always user-authored — only the
     incoming `user` message inherits the flag.
     """
+    # ContextVar so memory_log_fact (and future tools) can stamp the
+    # source_conversation_id without callers passing it through args.
+    # asyncio tasks each have their own copy; safe under concurrent
+    # process_turn calls (e.g. web chat + relay tick).
+    _set_current_conversation_id(conversation_id)
     store.append_message(
         conversation_id, "user", user_text, is_third_party=is_third_party,
     )
@@ -665,6 +810,7 @@ async def process_turn_stream(
     `is_third_party` flows down to archive so the row is eligible for
     the group-chat retention purge (ROADMAP M3).
     """
+    _set_current_conversation_id(conversation_id)
     store.append_message(
         conversation_id, "user", user_text, is_third_party=is_third_party,
     )

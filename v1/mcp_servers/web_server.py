@@ -31,6 +31,8 @@ import requests
 from claude_agent_sdk import create_sdk_mcp_server, tool
 from claude_agent_sdk.types import McpSdkServerConfig
 
+from mcp_servers._untrusted import wrap_untrusted
+
 BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
 TIMEOUT_S = 15
 USER_AGENT = "personal-agent/1.0 (+https://github.com/scuret/personal_agent)"
@@ -145,7 +147,12 @@ def create_web_mcp_server() -> McpSdkServerConfig:
             # Brave includes <strong>...</strong> highlights; strip them.
             desc = re.sub(r"</?strong>", "", desc)
             lines.append(f"- {title}\n  {url}\n  {desc[:240]}")
-        return _ok("\n\n".join(lines))
+        # Search-result snippets are arbitrary web content — could
+        # contain instruction-shaped lures from result-ranking spam.
+        return _ok(wrap_untrusted(
+            f"Brave web search results for query={args['query']!r}",
+            "\n\n".join(lines),
+        ))
 
     @tool(
         "web_fetch",
@@ -189,11 +196,15 @@ def create_web_mcp_server() -> McpSdkServerConfig:
         if "html" not in ctype.lower() and "xml" not in ctype.lower():
             # For plain text / markdown / json, just return raw (truncated).
             body = resp.text[:max_chars]
-            return _ok(f"[content-type: {ctype}]\n{body}")
+            return _ok(wrap_untrusted(
+                f"web page at {url} (content-type: {ctype})", body
+            ))
         text = _html_to_text(resp.text)
         if len(text) > max_chars:
             text = text[:max_chars] + "\n…(truncated)"
-        return _ok(f"[{resp.status_code} {url}]\n\n{text}")
+        return _ok(wrap_untrusted(
+            f"web page at {url} (status {resp.status_code})", text
+        ))
 
     return create_sdk_mcp_server(
         name="web",

@@ -25,6 +25,8 @@ import requests
 from claude_agent_sdk import create_sdk_mcp_server, tool
 from claude_agent_sdk.types import McpSdkServerConfig
 
+from mcp_servers._untrusted import wrap_untrusted
+
 API_PHP = "https://en.wikipedia.org/w/api.php"
 REST_BASE = "https://en.wikipedia.org/api/rest_v1"
 TIMEOUT_S = 12
@@ -88,7 +90,10 @@ def create_wikipedia_mcp_server() -> McpSdkServerConfig:
             import re
             snippet = re.sub(r"<[^>]+>", "", snippet)
             lines.append(f"- {s.get('title', '?')}\n  {snippet[:200]}")
-        return _ok("\n\n".join(lines))
+        return _ok(wrap_untrusted(
+            f"Wikipedia search results for query={args['query']!r}",
+            "\n\n".join(lines),
+        ))
 
     @tool(
         "wiki_summary",
@@ -120,12 +125,16 @@ def create_wikipedia_mcp_server() -> McpSdkServerConfig:
                 f"{d.get('title', args['title'])} is a disambiguation page. "
                 "Use wiki_search to pick a specific article."
             )
-        return _ok(
-            f"{d.get('title', '?')}\n"
-            f"{d.get('description', '') or '(no description)'}\n"
-            f"{d.get('content_urls', {}).get('desktop', {}).get('page', '')}\n\n"
-            f"{d.get('extract', '(no extract)')}"
-        )
+        wiki_title = d.get("title", "?")
+        return _ok(wrap_untrusted(
+            f"Wikipedia summary of {wiki_title!r}",
+            (
+                f"{wiki_title}\n"
+                f"{d.get('description', '') or '(no description)'}\n"
+                f"{d.get('content_urls', {}).get('desktop', {}).get('page', '')}\n\n"
+                f"{d.get('extract', '(no extract)')}"
+            ),
+        ))
 
     @tool(
         "wiki_get_article",
@@ -180,7 +189,10 @@ def create_wikipedia_mcp_server() -> McpSdkServerConfig:
             return _err(f"article {title!r} has no plain-text extract available")
         if len(extract) > max_chars:
             extract = extract[:max_chars] + "\n…(truncated)"
-        return _ok(f"{title}\n\n{extract}")
+        return _ok(wrap_untrusted(
+            f"Wikipedia article {title!r}",
+            f"{title}\n\n{extract}",
+        ))
 
     return create_sdk_mcp_server(
         name="wikipedia",

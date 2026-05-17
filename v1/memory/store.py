@@ -202,6 +202,18 @@ class MemoryStore:
         }
         if "embedding" not in fact_cols:
             conn.execute("ALTER TABLE facts ADD COLUMN embedding BLOB")
+        # Source tagging — every fact captures the conversation it came
+        # from so the /facts review queue can show "where did the agent
+        # learn this?" Security batch 5 (F2): with the lockdown that
+        # prevents memory_log_fact during automated triggers, facts can
+        # only land via interactive turns; this column lets the principal
+        # spot facts that came from a chat where they didn't actually
+        # ask the agent to remember anything (i.e. the agent following
+        # an instruction buried in untrusted content).
+        if "source_conversation_id" not in fact_cols:
+            conn.execute("ALTER TABLE facts ADD COLUMN source_conversation_id TEXT")
+        if "source_message_id" not in fact_cols:
+            conn.execute("ALTER TABLE facts ADD COLUMN source_message_id INTEGER")
 
     # ─── Conversation archive ───────────────────────────────────────────────
 
@@ -578,11 +590,23 @@ class MemoryStore:
         category: str,
         tags: list[str] | None = None,
         confidence: float = 1.0,
+        source_conversation_id: str | None = None,
+        source_message_id: int | None = None,
     ) -> int:
         cur = self._conn().execute(
-            """INSERT INTO facts (content, category, tags, confidence, created_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (content, category, json.dumps(tags or []), confidence, _now()),
+            """INSERT INTO facts
+                   (content, category, tags, confidence, created_at,
+                    source_conversation_id, source_message_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                content,
+                category,
+                json.dumps(tags or []),
+                confidence,
+                _now(),
+                source_conversation_id,
+                source_message_id,
+            ),
         )
         # `lastrowid` is set on the cursor returned by execute().
         fact_id = int(cur.lastrowid or 0)
@@ -646,6 +670,30 @@ class MemoryStore:
         for r in results:
             r["tags"] = json.loads(r["tags"]) if r.get("tags") else []
         return results
+
+    def recent_facts(self, hours: int = 24, limit: int = 100) -> list[dict[str, Any]]:
+        """Facts created in the last `hours` hours — for the /facts review
+        queue. Newest first. Includes inactive rows so the principal can
+        see what was just deactivated alongside what was just added.
+
+        Security batch 5 (F2): the review queue is the human-in-the-loop
+        check for facts the agent logged in response to chat content that
+        might have been prompt-injection-influenced. The source_conversation_id
+        column lets the UI link back to the chat where the fact was learned.
+        """
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(hours=int(hours))
+        ).isoformat()
+        rows = self._conn().execute(
+            """SELECT id, content, category, tags, confidence, created_at,
+                      source_conversation_id, source_message_id, is_active
+                 FROM facts
+                WHERE created_at >= ?
+             ORDER BY created_at DESC
+                LIMIT ?""",
+            (cutoff, int(limit)),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def deactivate_fact(self, fact_id: int) -> None:
         """Soft-delete a fact (sets is_active=0)."""

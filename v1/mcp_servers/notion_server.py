@@ -40,6 +40,8 @@ import requests
 from claude_agent_sdk import create_sdk_mcp_server, tool
 from claude_agent_sdk.types import McpSdkServerConfig
 
+from mcp_servers._untrusted import wrap_untrusted
+
 API_BASE = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
 TIMEOUT_S = 15
@@ -217,7 +219,12 @@ def create_notion_mcp_server() -> McpSdkServerConfig:
             if md is not None:
                 rendered.append(md)
         body = "\n".join(rendered) if rendered else "(empty page or all blocks are media/unsupported)"
-        return _ok(f"# {title}\n\n{body}")
+        # Notion page contents may have been authored by anyone the
+        # workspace was shared with — treat as untrusted.
+        return _ok(wrap_untrusted(
+            f"Notion page {title!r} ({page_id})",
+            f"# {title}\n\n{body}",
+        ))
 
     @tool(
         "notion_query_database",

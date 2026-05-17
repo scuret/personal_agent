@@ -24,11 +24,20 @@ def _grouped(facts: list[dict]) -> dict[str, list[dict]]:
 async def list_facts(request: Request) -> HTMLResponse:
     store = MemoryStore()
     facts = store.recall_facts(limit=200)
+    # Review queue — facts created in the last 24h, regardless of
+    # category. Security batch 5 F2: the agent only logs facts during
+    # interactive chat (automated triggers are blocked), so this view
+    # surfaces "what did the agent learn recently" so the principal can
+    # spot anything that came from a chat where they didn't actually
+    # mean to teach the agent something (e.g. an injection lure inside
+    # an email body that the agent partially fell for).
+    recent = store.recent_facts(hours=24, limit=50)
     return templates.TemplateResponse(
         request, "facts/list.html",
         {
             "by_category": _grouped(facts),
             "total": len(facts),
+            "recent": recent,
         },
     )
 

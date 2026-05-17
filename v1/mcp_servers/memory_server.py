@@ -30,6 +30,7 @@ Wired in by agent_host in step 3.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
@@ -104,12 +105,36 @@ def create_memory_mcp_server(store: MemoryStore) -> McpSdkServerConfig:
         log_fact_schema,
     )
     async def memory_log_fact(args: dict[str, Any]) -> dict[str, Any]:
+        # Security batch 5 (F2): block fact-logging during automated
+        # trigger runs. The brief / weekly-review path reads email
+        # bodies and other untrusted content, and the agent can be
+        # prompt-injected into calling this tool with attacker-chosen
+        # content that then persists into every future system prompt.
+        # During scheduled triggers there's no legitimate reason to
+        # log a new fact — the principal isn't even in the loop.
+        runtime_mode = (os.environ.get("AGENT_RUNTIME_MODE") or "").strip().lower()
+        if runtime_mode == "automated_trigger":
+            return {
+                "content": [{"type": "text", "text": (
+                    "memory_log_fact is disabled during automated triggers "
+                    "(morning brief / weekly review). If a fact should be "
+                    "captured, surface it in the brief output for the "
+                    "principal to confirm interactively."
+                )}],
+                "is_error": True,
+            }
+        # Late import to avoid circular: agent_host imports memory_server
+        # via build_options, so we can't import agent_host at module
+        # load. The ContextVar lookup is cheap.
+        from agent_host import get_current_conversation_id
+        source_conv = get_current_conversation_id()
         try:
             fact_id = store.log_fact(
                 content=args["content"],
                 category=args["category"],
                 tags=args.get("tags"),
                 confidence=float(args.get("confidence", 1.0)),
+                source_conversation_id=source_conv,
             )
             return {
                 "content": [

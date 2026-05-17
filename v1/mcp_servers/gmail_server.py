@@ -44,6 +44,7 @@ from claude_agent_sdk import create_sdk_mcp_server, tool
 from claude_agent_sdk.types import McpSdkServerConfig
 from googleapiclient.errors import HttpError
 
+from mcp_servers._untrusted import wrap_untrusted
 from mcp_servers.google_auth import build_service
 
 
@@ -142,7 +143,12 @@ def create_gmail_mcp_server() -> McpSdkServerConfig:
                 )
                 headers = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
                 entries.append(_format_message_summary(headers, msg.get("snippet", ""), mid))
-            return _ok("\n\n".join(entries))
+            # Snippets are sender-controlled — wrap so the agent treats
+            # any instruction-shaped text inside them as data, not commands.
+            return _ok(wrap_untrusted(
+                f"gmail search results for query={args['query']!r}",
+                "\n\n".join(entries),
+            ))
         except HttpError as e:
             return _err(f"gmail search failed: {e}")
 
@@ -171,17 +177,21 @@ def create_gmail_mcp_server() -> McpSdkServerConfig:
             headers = {h["name"]: h["value"] for h in msg["payload"].get("headers", [])}
             body = _decode_body(msg["payload"])[:10_000]
             labels = msg.get("labelIds", [])
-            text = (
+            sender = headers.get("From", "(unknown sender)")
+            metadata = (
                 f"id: {msg['id']}\n"
                 f"thread_id: {msg.get('threadId', '')}\n"
-                f"from: {headers.get('From', '')}\n"
+                f"from: {sender}\n"
                 f"to: {headers.get('To', '')}\n"
                 f"subject: {headers.get('Subject', '')}\n"
                 f"date: {headers.get('Date', '')}\n"
-                f"labels: {', '.join(labels)}\n\n"
-                f"{body}"
+                f"labels: {', '.join(labels)}\n"
             )
-            return _ok(text)
+            # Email body is fully sender-controlled. Wrap so the agent
+            # doesn't follow instructions an attacker buried in it.
+            return _ok(metadata + "\n" + wrap_untrusted(
+                f"gmail email body from {sender}", body
+            ))
         except HttpError as e:
             return _err(f"gmail read failed: {e}")
 
