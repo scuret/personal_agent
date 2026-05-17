@@ -292,6 +292,13 @@ def _build_app(
 async def _run_daemon() -> None:
     import uvicorn  # noqa: PLC0415
 
+    # Auto-restart on .env change so chat-driven sub-agent toggles +
+    # web-UI key saves take effect within ~10s without a manual kick.
+    from tools.env_watcher import watch_env_and_exit_on_change
+    asyncio.create_task(
+        watch_env_and_exit_on_change(log_prefix="[env-watch sms]")
+    )
+
     store = MemoryStore()
     allowed = _allowed_numbers()
     if not allowed:

@@ -283,6 +283,12 @@ async def _run_daemon() -> None:
     # transports.
     import discord  # noqa: E402
 
+    # Auto-restart on .env change so chat-driven sub-agent toggles +
+    # web-UI key saves take effect within ~10s without a manual kick.
+    from tools.env_watcher import watch_env_and_exit_on_change
+    asyncio.create_task(
+        watch_env_and_exit_on_change(log_prefix="[env-watch discord]")
+    )
     store = MemoryStore()
     allowed_users = _allowed_user_ids()
     allowed_channels = _allowed_channel_ids()

@@ -514,6 +514,7 @@ def _triage_email_with_haiku(
     email: dict[str, Any],
     today_local: datetime,
     tz_name: str,
+    store: MemoryStore | None = None,
 ) -> dict[str, Any]:
     """Single Haiku call that BOTH decides "is this worth a phone ping?"
     AND produces structured ping items when the answer is yes.
@@ -544,8 +545,17 @@ def _triage_email_with_haiku(
     today_long = today_local.strftime("%A, %B %d, %Y")
     today_iso = today_local.strftime("%Y-%m-%d")
 
+    # User feedback block — up to 3 positive + 3 negative corrections
+    # the user has recorded for email_triage via the learning_server.
+    # Empty string when there are no examples yet.
+    examples_block = ""
+    if store is not None:
+        from scheduler.trigger_prompts import render_examples_block
+        examples_block = render_examples_block("email_triage", store)
+
     prompt = (
-        "You are an inbox triage agent for one user. Output goes to "
+        examples_block
+        + "You are an inbox triage agent for one user. Output goes to "
         "their phone as iMessage bubbles, so be concise and action-shaped.\n"
         "\n"
         f"Today is {today_long} ({today_iso}). Timezone: {tz_name}.\n"
@@ -742,7 +752,7 @@ def _fire_email_watch(store: MemoryStore, config: dict[str, Any], now: datetime)
             seen.discard(eid)
             continue
         classified += 1
-        result = _triage_email_with_haiku(email, today_local, tz_name)
+        result = _triage_email_with_haiku(email, today_local, tz_name, store=store)
         if result.get("alert") and result.get("items"):
             triaged.append((email, result["items"]))
 
@@ -1845,6 +1855,15 @@ async def _fire_trigger(trigger_name: str) -> None:
     store = MemoryStore()
     sender = make_sender()
 
+    # User feedback block — up to 3 positive + 3 negative corrections
+    # the user has recorded for THIS trigger via the learning_server.
+    # Empty string when there are none yet, so behavior matches the
+    # pre-learning days for a fresh install.
+    from scheduler.trigger_prompts import render_examples_block
+    examples_block = render_examples_block(trigger_name, store)
+    if examples_block:
+        prompt = f"{examples_block}\n{prompt}"
+
     # Pre-render Todoist data deterministically and append to the synthetic
     # prompt as an authoritative block. The store is threaded in so the
     # block can include a progress diff vs the last fire ("overdue cleared
@@ -1888,6 +1907,18 @@ async def _fire_trigger(trigger_name: str) -> None:
         source=CONVERSATION_SOURCE, metadata={"trigger": trigger_name}
     )
     print(f"[fire @ {datetime.now().isoformat()}] {trigger_name} (conv={conversation_id}, model={TRIGGER_MODEL})")
+
+    # Record the assembled prompt so the agent can later fetch "what
+    # the brief actually saw" via learning__get_last_trigger_fire when
+    # the user texts feedback like "the brief should have included X".
+    try:
+        store.log_api_event(
+            conversation_id=conversation_id,
+            kind="trigger_fire",
+            payload={"trigger_name": trigger_name, "prompt": prompt},
+        )
+    except Exception as e:  # noqa: BLE001 — bookkeeping shouldn't crash
+        print(f"[fire] trigger_fire log failed: {e}", file=sys.stderr)
 
     try:
         async with ClaudeSDKClient(options=options) as client:
@@ -1956,6 +1987,13 @@ async def _run_daemon() -> None:
     """
     config = _load_config()
     tz = _user_tz()
+    # Auto-restart on .env change so chat-driven sub-agent toggles +
+    # web-UI key saves take effect within ~10s without a manual kick.
+    from tools.env_watcher import watch_env_and_exit_on_change
+    asyncio.create_task(
+        watch_env_and_exit_on_change(log_prefix="[env-watch scheduler]")
+    )
+
     store = MemoryStore()
 
     print(f"scheduler started (tz={tz.zone}, tick every {TICK_SECONDS}s). ctrl-c to stop.")

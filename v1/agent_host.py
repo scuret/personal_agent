@@ -49,6 +49,8 @@ from claude_agent_sdk.types import HookContext  # noqa: E402
 
 from memory.store import MemoryStore  # noqa: E402
 from mcp_servers.archive_server import create_archive_mcp_server  # noqa: E402
+from mcp_servers.config_server import create_config_mcp_server, disabled_subagents_from_env  # noqa: E402
+from mcp_servers.learning_server import create_learning_mcp_server  # noqa: E402
 from mcp_servers.calendar_server import create_calendar_mcp_server  # noqa: E402
 from mcp_servers.canva_server import create_canva_mcp_server  # noqa: E402
 from mcp_servers.docs_server import create_docs_mcp_server  # noqa: E402
@@ -254,6 +256,27 @@ REMINDER_TOOLS = [
     "mcp__reminders__cancel_reminder",
 ]
 
+# Self-management — the agent can read its own sub-agent inventory and
+# toggle SUBAGENTS_DISABLED from chat. NO credentials in chat — anything
+# that needs a key returns a setup URL the user opens on the Mac.
+CONFIG_TOOLS = [
+    "mcp__config__config_list_subagents",
+    "mcp__config__config_subagent_status",
+    "mcp__config__config_enable_subagent",
+    "mcp__config__config_disable_subagent",
+    "mcp__config__config_get_setup_link",
+]
+
+# Per-trigger learning — the agent captures user corrections and
+# inspects them. Examples auto-inject into trigger prompts via
+# scheduler.trigger_prompts.render_examples_block.
+LEARNING_TOOLS = [
+    "mcp__learning__learning_record_trigger_example",
+    "mcp__learning__learning_list_trigger_examples",
+    "mcp__learning__learning_delete_trigger_example",
+    "mcp__learning__learning_get_last_trigger_fire",
+]
+
 YOUTUBE_TOOLS = [
     "mcp__youtube__youtube_search",
     "mcp__youtube__youtube_get_video",
@@ -430,11 +453,23 @@ async def _block_send_tools(
 
 
 def build_options(store: MemoryStore, model: str | None = None) -> ClaudeAgentOptions:
+    # User-toggled soft-disable list. Read from os.environ (already
+    # populated by load_dotenv at process startup). The env_watcher
+    # exits the process when .env changes so the next respawn picks up
+    # toggles from chat without a manual restart.
+    disabled = disabled_subagents_from_env({
+        "SUBAGENTS_DISABLED": os.environ.get("SUBAGENTS_DISABLED", "")
+    })
+
     # Sub-agent registration table. Each entry: (name, factory, tool list,
     # is_enabled callable). Filtered by enablement — only configured
     # integrations register, so unused tools don't bloat the system prompt
-    # and the agent never tries to call something that'd fail.
+    # and the agent never tries to call something that'd fail. The
+    # `config` + `learning` servers are always-on and never appear in the
+    # disabled set (they ARE the toggle surface).
     candidates: list[tuple[str, Any, list[str], Any]] = [
+        ("config",    lambda: create_config_mcp_server(),          CONFIG_TOOLS,    lambda: True),
+        ("learning",  lambda: create_learning_mcp_server(store),   LEARNING_TOOLS,  lambda: True),
         ("memory",    lambda: create_memory_mcp_server(store),     MEMORY_TOOLS,    lambda: True),
         ("archive",   lambda: create_archive_mcp_server(store),    ARCHIVE_TOOLS,   lambda: True),
         ("weather",   lambda: create_weather_mcp_server(),         WEATHER_TOOLS,   lambda: True),
@@ -475,13 +510,27 @@ def build_options(store: MemoryStore, model: str | None = None) -> ClaudeAgentOp
     mcp_servers: dict[str, Any] = {}
     allowed_tools: list[str] = []
     enabled_names: list[str] = []
+    skipped_disabled: list[str] = []
     for name, factory, tools, is_enabled in candidates:
+        # Soft-disable: name in SUBAGENTS_DISABLED overrides the
+        # credential gate. `config` and `learning` are NOT in the SUBAGENTS
+        # registry — they're always-on by design (they're the toggle
+        # surface; you can't toggle the toggle).
+        if name in disabled:
+            skipped_disabled.append(name)
+            continue
         if is_enabled():
             mcp_servers[name] = factory()
             allowed_tools.extend(tools)
             enabled_names.append(name)
 
     print(f"[agent_host] enabled sub-agents: {', '.join(enabled_names)}", flush=True)
+    if skipped_disabled:
+        print(
+            f"[agent_host] soft-disabled (in SUBAGENTS_DISABLED): "
+            f"{', '.join(skipped_disabled)}",
+            flush=True,
+        )
 
     return ClaudeAgentOptions(
         # Personality + runtime context + injected facts.

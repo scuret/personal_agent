@@ -104,6 +104,27 @@ CREATE TABLE IF NOT EXISTS reminders (
 CREATE INDEX IF NOT EXISTS idx_reminders_pending
     ON reminders(fire_at)
     WHERE fired_at IS NULL AND cancelled_at IS NULL;
+
+-- Per-trigger few-shot examples. The user teaches a trigger
+-- (email_triage, morning_brief, weekly_review, …) by recording a
+-- positive ("this should have fired") or negative ("this fired but
+-- shouldn't") example. At call time, the trigger's prompt assembly
+-- (scheduler/trigger_prompts.render_examples_block) reads up to N
+-- recent examples per polarity and prepends them as in-context
+-- corrections. Old examples soft-delete via is_active=0 — they stay
+-- visible in the /learning UI but stop influencing the prompt.
+CREATE TABLE IF NOT EXISTS trigger_examples (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    trigger_name    TEXT NOT NULL,
+    polarity        TEXT NOT NULL,        -- 'positive' | 'negative'
+    input_payload   TEXT NOT NULL,        -- the raw input the trigger saw
+    expected_output TEXT,                 -- nullable; user's stated correct outcome
+    note            TEXT,                 -- user's explanation
+    created_at      TEXT NOT NULL,
+    is_active       INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_trigger_examples_lookup
+    ON trigger_examples(trigger_name, is_active, created_at DESC);
 """
 
 
@@ -731,3 +752,109 @@ class MemoryStore:
                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at""",
             (key, value, _now()),
         )
+
+    # ─── Per-trigger learning examples ──────────────────────────────────────
+
+    # Allowed polarities + a trigger-name allowlist. Kept here (not in the
+    # MCP server) so anywhere in the codebase that touches trigger_examples
+    # validates against the same set.
+    TRIGGER_EXAMPLE_POLARITIES = ("positive", "negative")
+    TRIGGER_NAMES = (
+        "email_triage",
+        "morning_brief",
+        "weekly_review",
+        # Phase 2 (LLM gating not yet wired):
+        "delivery_watch",
+        "expected_arrivals",
+    )
+
+    def record_trigger_example(
+        self,
+        trigger_name: str,
+        polarity: str,
+        input_payload: str,
+        expected_output: str | None = None,
+        note: str | None = None,
+    ) -> int:
+        """Persist one user correction for a trigger. Returns the new row id.
+
+        Polarity meaning:
+          'positive' = "this input SHOULD have fired the trigger" / "this
+                       output was correct" — bias the next call toward
+                       firing / producing similar output.
+          'negative' = "this input fired but shouldn't have" / "this output
+                       was wrong" — bias the next call away from it.
+        """
+        if polarity not in self.TRIGGER_EXAMPLE_POLARITIES:
+            raise ValueError(
+                f"polarity must be one of {self.TRIGGER_EXAMPLE_POLARITIES}, "
+                f"got {polarity!r}"
+            )
+        if trigger_name not in self.TRIGGER_NAMES:
+            raise ValueError(
+                f"trigger_name must be one of {self.TRIGGER_NAMES}, "
+                f"got {trigger_name!r}"
+            )
+        cur = self._conn().execute(
+            """INSERT INTO trigger_examples
+                   (trigger_name, polarity, input_payload, expected_output,
+                    note, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                trigger_name,
+                polarity,
+                input_payload,
+                expected_output,
+                note,
+                _now(),
+            ),
+        )
+        return int(cur.lastrowid or 0)
+
+    def list_trigger_examples(
+        self,
+        trigger_name: str | None = None,
+        polarity: str | None = None,
+        limit: int = 20,
+        active_only: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Return examples for inspection / injection.
+
+        Newest first. Pass active_only=False to include soft-deleted rows
+        (used by the /learning UI's 'archived' view).
+        """
+        where: list[str] = []
+        params: list[Any] = []
+        if trigger_name:
+            where.append("trigger_name = ?")
+            params.append(trigger_name)
+        if polarity:
+            where.append("polarity = ?")
+            params.append(polarity)
+        if active_only:
+            where.append("is_active = 1")
+        sql = "SELECT * FROM trigger_examples"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(int(limit))
+        return [dict(r) for r in self._conn().execute(sql, params).fetchall()]
+
+    def soft_delete_trigger_example(self, example_id: int) -> bool:
+        """Mark one example inactive. Returns True if a row was updated."""
+        cur = self._conn().execute(
+            "UPDATE trigger_examples SET is_active = 0 WHERE id = ? AND is_active = 1",
+            (int(example_id),),
+        )
+        return (cur.rowcount or 0) > 0
+
+    def count_trigger_examples(
+        self, trigger_name: str, active_only: bool = True
+    ) -> int:
+        """Used by /learning UI for the per-trigger badge."""
+        sql = "SELECT COUNT(*) AS c FROM trigger_examples WHERE trigger_name = ?"
+        params: list[Any] = [trigger_name]
+        if active_only:
+            sql += " AND is_active = 1"
+        row = self._conn().execute(sql, params).fetchone()
+        return int(row["c"] or 0)

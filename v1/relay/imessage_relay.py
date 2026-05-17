@@ -803,6 +803,14 @@ async def _run_daemon(
     user_handle: str = "",
     agent_apple_id: str = "",
 ) -> None:
+    # Background watcher: exits the process when `.env` changes so
+    # LaunchAgent KeepAlive respawns with the new config. Picks up
+    # chat-driven sub-agent toggles via config_server, manual `.env`
+    # edits, and web-UI saves alike.
+    from tools.env_watcher import watch_env_and_exit_on_change
+    asyncio.create_task(
+        watch_env_and_exit_on_change(log_prefix="[env-watch imessage]")
+    )
     store = MemoryStore()
     reader = ChatReader(
         mode=mode,

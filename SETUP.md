@@ -33,6 +33,7 @@ covers the same flow interactively.
 - [6. Behavior defaults](#behavior) — timezone, model
 - [7. Install LaunchAgents](#launchagents) — make it run on login
 - [Troubleshooting](#troubleshooting)
+- [Manage sub-agents from chat](#chat-management) — toggle integrations + teach triggers from iMessage / Telegram / etc.
 
 ---
 
@@ -686,6 +687,60 @@ iterating on personality.md.
 For everything else: the daemon logs at `data/*.log` are usually the answer.
 Tail them in the web UI's Observability page or directly:
 `tail -f data/relay.log data/scheduler.log`.
+
+---
+
+## <a id="chat-management"></a> Manage sub-agents from chat
+
+Once everything's installed, you can toggle sub-agents and capture trigger
+corrections directly from iMessage / Telegram / Slack / Discord / SMS without
+opening the web UI. The agent has tools for both.
+
+### Toggle sub-agents
+
+Just text the agent:
+
+- *"what sub-agents are on"* / *"what's available"* — lists everything with
+  state (enabled / disabled / not_configured)
+- *"is spotify on"* / *"status of todoist"* — one-sub-agent detail
+- *"disable spotify"* — soft-disables (adds to `SUBAGENTS_DISABLED` in `.env`);
+  credentials stay put for easy re-enable
+- *"enable spotify"* — reverses the disable. If credentials are missing, the
+  agent replies with a setup URL instead
+- *"set up canva"* / *"where do I configure github"* — returns
+  `http://127.0.0.1:8780/settings/connect/<name>` to open on your Mac
+
+After a toggle, the relay + scheduler auto-restart within ~10 seconds via the
+`env_watcher` mtime poll on `.env`. No manual `launchctl kickstart` needed.
+
+**Security note:** the agent will never accept credentials in chat. iMessage /
+Slack history is persistent and easily readable from your device — pasting an
+API key there is the same as committing it to git. The setup URL is
+loopback-only (`127.0.0.1`), so you have to open it on your Mac (clicking from
+your phone won't resolve — that's intentional).
+
+### Teach triggers when they get it wrong
+
+Three triggers can learn from your corrections in v1: email triage, the
+morning brief, the Sunday weekly review. (Delivery watch + expected
+arrivals are pattern-matching today and don't have a learning hook yet.)
+
+Phrasings the agent maps to corrections:
+
+- *"this email should have pinged me [forward]"* → records a positive
+  example for email triage
+- *"this fired but shouldn't have"* / *"don't ping me on these"* →
+  records a negative example for email triage
+- *"the morning brief should have included X"* /
+  *"the brief was wrong about Y"* → records a brief correction
+  (the agent fetches the last fire's prompt automatically)
+- *"forget that rule about X"* → soft-deletes the matching example
+
+Corrections take effect on the next fire of that trigger — no restart
+needed. Up to 3 positive + 3 negative recent examples per trigger get
+injected into the prompt as in-context corrections.
+
+Review + curate everything at `http://127.0.0.1:8780/learning` on your Mac.
 
 ---
 

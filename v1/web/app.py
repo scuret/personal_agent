@@ -74,6 +74,7 @@ def make_app() -> FastAPI:
         facts,
         home,
         install,
+        learning,
         observability,
         reminders,
         settings,
@@ -96,6 +97,7 @@ def make_app() -> FastAPI:
     app.include_router(wizard.router)
     app.include_router(install.router)
     app.include_router(about.router)
+    app.include_router(learning.router)
 
     @app.exception_handler(404)
     async def _not_found(request: Request, _exc):

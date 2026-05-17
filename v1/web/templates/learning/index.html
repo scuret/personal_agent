@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}learning · personal_agent{% endblock %}
+{% block content %}
+
+<div class="flex items-baseline justify-between mb-6">
+    <h1 class="text-2xl font-semibold">📚 learning</h1>
+    <div class="text-xs text-zinc-500 flex items-baseline gap-4">
+        {% if show_archived %}
+        <a href="/learning" class="text-sky-400 hover:text-sky-300">← active only</a>
+        {% else %}
+        <a href="/learning?archived=1" class="text-sky-400 hover:text-sky-300">show archived →</a>
+        {% endif %}
+        <a href="/settings" class="text-sky-400 hover:text-sky-300">settings →</a>
+    </div>
+</div>
+
+<div class="mb-6 rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 text-sm text-zinc-300">
+    <p>
+        When you tell the agent <em>"this email should have pinged me"</em> or
+        <em>"the brief shouldn't have included weather"</em>, it captures the
+        correction here. The next time that trigger fires, up to 3 positive +
+        3 negative examples (newest first) get prepended to the prompt so the
+        model sees your past preferences.
+    </p>
+    <p class="text-xs text-zinc-500 mt-2">
+        Soft-delete (archive) a row to stop it influencing the prompt — the
+        row stays for audit. Hard delete isn't exposed; this surface is
+        intentionally append + archive only.
+    </p>
+</div>
+
+{% for tr in triggers %}
+<section class="mb-8">
+    <div class="flex items-baseline justify-between mb-2">
+        <h2 class="text-lg font-semibold mono">{{ tr.name }}</h2>
+        <span class="text-xs text-zinc-500">
+            {{ tr.active_count }} active{% if tr.archived_count %} · {{ tr.archived_count }} archived{% endif %}
+        </span>
+    </div>
+
+    {% if not tr.examples %}
+    <div class="rounded-lg border border-dashed border-zinc-800 bg-zinc-950/40 p-4 text-xs text-zinc-500">
+        no {{ "examples (active or archived)" if show_archived else "active examples" }} yet.
+        Tell the agent something like
+        <code class="mono text-zinc-300">"this email should have pinged me"</code>
+        next time it gets one wrong.
+    </div>
+    {% else %}
+    <ul class="space-y-2">
+        {% for ex in tr.examples %}
+        {% set polarity_class = "border-emerald-700/40 bg-emerald-950/20" if ex.polarity == "positive" else "border-rose-700/40 bg-rose-950/20" %}
+        <li class="rounded-lg border {{ polarity_class }} p-4 {% if not ex.is_active %}opacity-60{% endif %}">
+            <div class="flex items-baseline justify-between gap-3 mb-2">
+                <div class="flex items-baseline gap-2 text-xs">
+                    <span class="px-2 py-0.5 rounded-full
+                        {% if ex.polarity == 'positive' %}bg-emerald-900/60 text-emerald-300
+                        {% else %}bg-rose-900/60 text-rose-300{% endif %}">
+                        {{ ex.polarity }}
+                    </span>
+                    <span class="text-zinc-500">#{{ ex.id }} · {{ ex.created_at[:16].replace('T', ' ') }}</span>
+                    {% if not ex.is_active %}
+                    <span class="text-amber-400">archived</span>
+                    {% endif %}
+                </div>
+                {% if ex.is_active %}
+                <form method="post" action="/learning/{{ ex.id }}/archive" class="m-0">
+                    <button class="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+                            onclick="return confirm('Archive this example? It will stop influencing the next {{ tr.name }} fire.');">
+                        archive
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+            {% if ex.note %}
+            <p class="text-sm text-zinc-100 italic mb-2">"{{ ex.note }}"</p>
+            {% endif %}
+            {% if ex.expected_output %}
+            <p class="text-xs text-zinc-400 mb-2">
+                <span class="text-zinc-500">expected:</span> {{ ex.expected_output }}
+            </p>
+            {% endif %}
+            <details>
+                <summary class="text-xs text-zinc-500 cursor-pointer hover:text-zinc-300 select-none">
+                    show input ({{ ex.input_payload|length }} chars)
+                </summary>
+                <pre class="mt-2 text-[11px] text-zinc-300 bg-zinc-950 border border-zinc-800 rounded p-2 whitespace-pre-wrap overflow-x-auto">{{ ex.input_payload }}</pre>
+            </details>
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</section>
+{% endfor %}
+
+{% endblock %}
