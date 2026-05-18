@@ -244,6 +244,8 @@ The agent is a single Claude reasoning loop with 27 in-process MCP sub-agents. Y
 
 Plus: **scheduled morning brief** (~7:30 AM) and **Sunday weekly review** (8 PM) auto-pushed to your active transport.
 
+**Reply length is tiered** — full text for info asks and action follow-ups, a single emoji (👍 ❤️ ✅ 🙏) for pure acks, and no reply at all for closing-shaped messages like "ok" / "got it" / tapbacks. If you text the agent something it considers a pure ack, expect silence — that's intentional, not a bug. The rules live in `config/personality.md` under "Reply length"; tighten them there if the agent over- or under-replies.
+
 ---
 
 ## Web admin UI
