@@ -198,8 +198,15 @@ rewrote all 67 commits; the 15-email allowlist is no longer in any
 historical diff. Residual placeholder references in tracked docs
 fold into going-public #9 (final secret sweep).
 
-Remaining work: none in this section. The smaller cleanups for
-documentation references happen as part of going-public #9.
+Batch 5 (shipped 2026-05-17): the prior batches focused on file
+perms / retention / web binding / repo scrub but didn't look at
+prompt injection or destructive-tool exposure. A second focused
+audit surfaced F1–F11; all H/MED items (F1–F10) shipped across
+three phases. F11 (SSE-stream concurrency cap) was deferred to the
+LOW tier — see L6 below.
+
+Remaining work: none in the planned tier. Documentation cleanups
+fold into going-public #9; theoretical risks live under L1–L6.
 
 #### ~~H1. File-permission hardening on tokens, DB, and logs~~ — shipped
 - Every token cache writer (`mcp_servers/dropbox_auth.py`,
@@ -377,6 +384,27 @@ documentation references happen as part of going-public #9.
   "Image attachments" tells the agent that older images may have
   been purged so it doesn't confabulate when asked about them.
 
+#### ~~Batch 5 (F1–F10): prompt-injection containment + web/OAuth hardening~~ — shipped 2026-05-17
+
+Three phases, three commits:
+
+**Phase A — prompt-injection containment** (commit `df9b378`):
+- **F1.** `agent_host._block_send_tools` was substring-match on `"send"`. Replaced with `_destructive_action_gate`: explicit `ALWAYS_DENIED_TOOLS` (`drive_create_share_link`, `linkedin_post_share` — no recovery path) + `AUTOMATED_DENIED_TOOLS` (33 write-shaped tools blocked when `AGENT_RUNTIME_MODE=automated_trigger`). `scheduler.triggers._fire_trigger` flips the env var around each SDK session. Legacy `"send"` substring guard kept as defense-in-depth.
+- **F2.** `memory_log_fact` refuses with `is_error` during automated triggers. New `source_conversation_id` / `source_message_id` columns on `facts` table via defensive migration. `agent_host` exposes a `contextvars.ContextVar` set by `process_turn` / `process_turn_stream`; `memory_log_fact` reads it and stamps the row. `/facts` page gains a "📋 review queue · last 24h" section with source-conversation links.
+- **F3.** New `mcp_servers/_untrusted.py:wrap_untrusted(source, content)` helper. Applied to every tool that returns external content: `gmail_search`/`gmail_read`, `web_search`/`web_fetch`, `notion_get_page`, `drive_read_text`, `docs_read`, all `reddit_*` reads, `wikipedia_search`/`summary`/`get_article`. iMessage group-mode prepends `[GROUP MESSAGE FROM <sender>]` to third-party messages (Telegram/Discord/Slack already filter at user-allowlist level).
+- **A3.** `personality.md` gains "Untrusted content" section teaching the bracket convention and the DATA-not-COMMANDS principle.
+- **F5.** Email-triage Haiku prompt now explicitly forbids URLs / login prompts / "click here" / "verify your" / "gift card" / "wire transfer" phrasings. Post-parse phishing sieve in `_parse_triage_output` drops any ALERT whose items match those phrases and logs a `triage_suppressed` `api_events` row.
+
+**Phase B — CSRF middleware** (commit `69cb7bd`):
+- **F4.** New `web/csrf.py:CSRFMiddleware`. State-changing requests must carry an `Origin` (preferred) or `Referer` header matching `http://127.0.0.1:WEB_PORT`, `http://localhost:WEB_PORT`, or anything in optional `WEB_ALLOWED_ORIGINS`. Closes the OWASP gap that loopback binding alone doesn't cover: malicious local pages + DNS rebinding can both issue cross-origin POSTs.
+
+**Phase C — OAuth state + file perms + small misc** (commit `69cb7bd`):
+- **F6.** All four OAuth helpers that lacked proper state validation (`dropbox_auth`, `spotify_auth`, `canva_auth`, `linkedin_auth`) now generate `secrets.token_urlsafe(32)`, prime `_CodeCatcher.expected_state` before `serve_forever`, and reject any callback whose `?state=` doesn't match. (Google + Eight Sleep already did this correctly.)
+- **F7.** `web/routes/wizard.py:_write_progress` uses `os.open(O_WRONLY|O_CREAT|O_TRUNC, 0o600)` + non-suppressed `os.chmod` (mirrors the `_env_io.py` pattern). Removes the world-readable window between write and chmod.
+- **F8.** `web/routes/about.py:/setup-image/{name}` gains a `Path.resolve()` parent-containment check. Symlinked `.png` inside `docs/setup/` can no longer escape the directory.
+- **F9.** New `MAX_UPLOAD_BYTES_PER_FILE = 25 MB` constant in `web/routes/chat.py`. Reject with HTTP 413 before disk write.
+- **F10.** `relay/imessage_relay.py` gains `_is_valid_handle` / `_is_valid_email` / `_is_valid_chat_identifier` validators. Daemon startup refuses bad `TARGET_PHONE_NUMBER` / `IMESSAGE_USER_HANDLE` / `IMESSAGE_AGENT_APPLE_ID`. `ChatSender._chat_script` raises `ValueError` on bad `chat_identifier`. Existing AppleScript backslash + quote escape kept as primary defense.
+
 ### Recorded for future consideration (LOW — no implementation planned)
 
 These are theoretical risks or quality-of-life improvements with
@@ -387,9 +415,7 @@ sessions, but not on the implementation plan.
   validity but never rotates. README warns "rotate quarterly" but
   it's manual. Future: `tools/rotate_tokens.py` skeleton + cadence
   reminders in the morning brief.
-- **L2. Relay-destination sanity check.** `TARGET_PHONE_NUMBER` is
-  used verbatim; a typo silently re-routes briefs. Future: format-
-  validate at startup; warn on first send if destination changed.
+- **L2. Relay-destination sanity check.** Format-validation at startup landed as part of Batch 5 F10 — daemon refuses to start with a bad `TARGET_PHONE_NUMBER`. Outstanding half: warn-on-first-send if the destination changed since the last successful brief delivery.
 - **L3. Maps `USER_HOME_ADDRESS` caching.** Every geocode query
   sends the home address to Google/OSM. Future: cache coordinates
   locally and only re-resolve when the address changes.
@@ -398,6 +424,15 @@ sessions, but not on the implementation plan.
   for v1; revisit if the corpus grows or sensitivity changes.
 - **L5. Time Machine / iCloud Drive exclusion.** Mentioned in the
   README privacy section as a user recommendation but not enforced.
+- **L6. SSE-stream concurrency cap (Batch 5 F11 / Phase D).**
+  `web/daemon_control.py:tail_log` and `web/routes/daemon.py`'s SSE
+  streams aren't capped — N concurrent `/daemon/<x>/log` connections
+  consume one file handle each. On a single-user local box the
+  practical DoS impact is negligible (the principal would have to
+  open hundreds of tabs), but the gap exists. Future: max-concurrent-
+  streams-per-IP, OR an idle timeout (close after 5 min of no data).
+  Defer until the multi-user / publicly-exposed deployment becomes
+  real.
 
 ### Already strong (no change needed)
 
