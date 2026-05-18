@@ -78,9 +78,24 @@ def _write_progress(updates: dict[str, Any]) -> dict[str, Any]:
     state = _read_progress()
     state.update(updates)
     PROGRESS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PROGRESS_PATH.write_text(json.dumps(state, indent=2))
-    with contextlib.suppress(OSError):
-        os.chmod(PROGRESS_PATH, 0o600)
+    data = json.dumps(state, indent=2)
+    # Atomic 0o600 perms — create the file with restricted mode from
+    # the start so a process race between write_text() and chmod()
+    # can't leave a world-readable window, and don't suppress chmod
+    # failure (the previous suppress-OSError pattern hid the bug from
+    # ROADMAP H1's "everything in data/ is 0o600" invariant). Security
+    # batch 5 C2.
+    fd = os.open(PROGRESS_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(data)
+    except Exception:
+        os.close(fd)  # in case fdopen raised before adopting fd
+        raise
+    # Re-tighten perms on an existing-file write (O_CREAT mode only
+    # applies on creation; an existing 0o644 file keeps its perms
+    # through O_TRUNC).
+    os.chmod(PROGRESS_PATH, 0o600)
     return state
 
 

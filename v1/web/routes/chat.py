@@ -33,6 +33,15 @@ UPLOADS_DIR = V1_DIR / "data" / "uploads"
 # query-string limits when the [attachment: ...] markers are encoded
 # into it. iMessage's own typical limit is comparable.
 MAX_IMAGES_PER_TURN = 4
+
+# Per-file size cap. The aggregate UPLOADS_TOTAL_CAP_MB defends the
+# data/uploads/ tree against unbounded growth post-write, but each
+# individual upload was unbounded — a stray 500MB drop blocked the
+# event loop and ate cap budget before _enforce_uploads_cap kicked in.
+# 25 MB is more than enough for any reasonable phone photo
+# (HEIC/JPEG are typically 2-5 MB; large bursts hit ~15 MB).
+# Security batch 5 C4.
+MAX_UPLOAD_BYTES_PER_FILE = 25 * 1024 * 1024
 ALLOWED_IMAGE_MIMES = {"image/jpeg", "image/png", "image/heic", "image/heif", "image/webp", "image/gif"}
 
 # Total cap on the data/uploads/ tree. Once exceeded, oldest
@@ -187,9 +196,20 @@ async def send_message(
         mime = (f.content_type or "").lower()
         if mime not in ALLOWED_IMAGE_MIMES:
             raise HTTPException(400, f"unsupported image type: {mime!r}")
+        content = await f.read()
+        # Per-file size cap (security batch 5 C4). Reject before
+        # writing to disk so a giant upload doesn't briefly blow past
+        # the aggregate cap or eat memory.
+        if len(content) > MAX_UPLOAD_BYTES_PER_FILE:
+            raise HTTPException(
+                413,
+                f"image too large ({len(content)} bytes; max "
+                f"{MAX_UPLOAD_BYTES_PER_FILE} bytes / "
+                f"{MAX_UPLOAD_BYTES_PER_FILE // (1024*1024)} MB per file)",
+            )
         conv_uploads.mkdir(parents=True, exist_ok=True)
         dest = conv_uploads / f"{uuid.uuid4().hex}{_ext_from_mime(mime)}"
-        dest.write_bytes(await f.read())
+        dest.write_bytes(content)
         saved.append({
             "path": str(dest),
             "mime": mime,

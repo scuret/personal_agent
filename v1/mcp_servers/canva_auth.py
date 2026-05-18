@@ -225,13 +225,32 @@ def get_access_token() -> str:
 
 
 class _CodeCatcher(BaseHTTPRequestHandler):
+    """Catches the Canva OAuth redirect.
+
+    Security batch 5 (C1): validates `state` against `expected_state`
+    (was already generated and sent in the auth URL, but the previous
+    implementation never checked it on the callback). Mismatch = CSRF
+    attempt, treated as an auth error.
+    """
+
     captured_code: str | None = None
     captured_error: str | None = None
+    expected_state: str | None = None
 
     def do_GET(self):  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
-        if "code" in params:
+        returned_state = (params.get("state") or [""])[0]
+        if (
+            _CodeCatcher.expected_state
+            and returned_state != _CodeCatcher.expected_state
+        ):
+            _CodeCatcher.captured_error = (
+                "CSRF: OAuth state mismatch "
+                f"(expected {_CodeCatcher.expected_state[:8]}…, got {returned_state[:8]!r})"
+            )
+            body = b"<html><body><h2>auth failed.</h2><p>state mismatch (CSRF check).</p></body></html>"
+        elif "code" in params:
             _CodeCatcher.captured_code = params["code"][0]
             body = b"<html><body><h2>auth ok.</h2><p>you can close this window.</p></body></html>"
         elif "error" in params:
@@ -263,7 +282,13 @@ def run_interactive_auth() -> None:
     port = _redirect_port()
     redirect_uri = f"http://127.0.0.1:{port}"
     code_verifier, code_challenge = _pkce_pair()
-    state = secrets.token_urlsafe(16)
+    # Prime the catcher to enforce the state we send. Was previously
+    # only generated and sent, never validated — opened a narrow CSRF
+    # window in the 5-min callback period.
+    state = secrets.token_urlsafe(32)
+    _CodeCatcher.expected_state = state
+    _CodeCatcher.captured_code = None
+    _CodeCatcher.captured_error = None
     params = {
         "client_id": cid,
         "response_type": "code",

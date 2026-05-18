@@ -195,15 +195,35 @@ def get_access_token() -> str:
 
 
 class _CodeCatcher(BaseHTTPRequestHandler):
-    """One-shot HTTP server that catches Dropbox's redirect with ?code=."""
+    """One-shot HTTP server that catches Dropbox's redirect with ?code=.
+
+    Security batch 5 (C1): validates the OAuth `state` query parameter
+    against `expected_state` (set before `serve_forever`). Mismatch is
+    treated as a CSRF attempt and surfaced as an auth error, not as a
+    success — protects against an attacker who tricks the principal
+    into clicking a malicious redirect URL during the 5-min window.
+    """
 
     captured_code: str | None = None
     captured_error: str | None = None
+    expected_state: str | None = None
 
     def do_GET(self):  # noqa: N802 — required by stdlib BaseHTTPRequestHandler
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
-        if "code" in params:
+        # State first — if it doesn't match, we don't trust anything
+        # else about this request.
+        returned_state = (params.get("state") or [""])[0]
+        if (
+            _CodeCatcher.expected_state
+            and returned_state != _CodeCatcher.expected_state
+        ):
+            _CodeCatcher.captured_error = (
+                "CSRF: OAuth state mismatch "
+                f"(expected {_CodeCatcher.expected_state[:8]}…, got {returned_state[:8]!r})"
+            )
+            body = b"<html><body><h2>auth failed.</h2><p>state mismatch (CSRF check).</p></body></html>"
+        elif "code" in params:
             _CodeCatcher.captured_code = params["code"][0]
             body = b"<html><body><h2>auth ok.</h2><p>you can close this window.</p></body></html>"
         elif "error" in params:
@@ -251,10 +271,18 @@ def run_interactive_auth() -> None:
     key, _secret = _app_creds()
     port = _redirect_port()
     redirect_uri = f"http://localhost:{port}"
+    # CSRF protection: generate a per-run state, include it in the auth
+    # URL, and prime the callback handler to require an exact match.
+    import secrets
+    state = secrets.token_urlsafe(32)
+    _CodeCatcher.expected_state = state
+    _CodeCatcher.captured_code = None
+    _CodeCatcher.captured_error = None
     params = {
         "client_id": key,
         "response_type": "code",
         "redirect_uri": redirect_uri,
+        "state": state,
         # offline = give us a refresh_token along with the access_token.
         "token_access_type": "offline",
     }

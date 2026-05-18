@@ -203,13 +203,31 @@ def get_access_token() -> str:
 
 
 class _CodeCatcher(BaseHTTPRequestHandler):
+    """Catches the Spotify OAuth redirect.
+
+    Security batch 5 (C1): validates the `state` query parameter
+    against `expected_state` (set before serve_forever). State
+    mismatch = CSRF attempt, surfaced as an auth error.
+    """
+
     captured_code: str | None = None
     captured_error: str | None = None
+    expected_state: str | None = None
 
     def do_GET(self):  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
-        if "code" in params:
+        returned_state = (params.get("state") or [""])[0]
+        if (
+            _CodeCatcher.expected_state
+            and returned_state != _CodeCatcher.expected_state
+        ):
+            _CodeCatcher.captured_error = (
+                "CSRF: OAuth state mismatch "
+                f"(expected {_CodeCatcher.expected_state[:8]}…, got {returned_state[:8]!r})"
+            )
+            body = b"<html><body><h2>auth failed.</h2><p>state mismatch (CSRF check).</p></body></html>"
+        elif "code" in params:
             _CodeCatcher.captured_code = params["code"][0]
             body = b"<html><body><h2>auth ok.</h2><p>you can close this window.</p></body></html>"
         elif "error" in params:
@@ -247,11 +265,19 @@ def run_interactive_auth(port: int | None = None) -> None:
         env_port = os.environ.get("SPOTIFY_REDIRECT_PORT")
         port = int(env_port) if env_port else 8765
     redirect_uri = f"http://127.0.0.1:{port}"
+    # CSRF protection: generate a state, include in the auth URL, prime
+    # the catcher to require an exact match on the callback.
+    import secrets
+    state = secrets.token_urlsafe(32)
+    _CodeCatcher.expected_state = state
+    _CodeCatcher.captured_code = None
+    _CodeCatcher.captured_error = None
     params = {
         "client_id": cid,
         "response_type": "code",
         "redirect_uri": redirect_uri,
         "scope": " ".join(SCOPES),
+        "state": state,
         # show_dialog=true forces re-consent even if previously authed,
         # so a scope change is acknowledged by the user.
         "show_dialog": "true",

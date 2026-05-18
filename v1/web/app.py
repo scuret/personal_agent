@@ -57,6 +57,15 @@ def make_app() -> FastAPI:
         docs_url=None,           # no swagger — keeps surface area minimal
         redoc_url=None,
     )
+    # CSRF defense. The UI is 127.0.0.1-bound + no-auth, which the
+    # principal explicitly chose. This middleware closes the OWASP-
+    # documented gap that loopback binding alone does NOT cover: a
+    # malicious local page or a DNS-rebinding attack can issue
+    # cross-origin POSTs to our endpoints. Same-origin browser POSTs
+    # always carry Origin / Referer; anything else gets rejected with
+    # a JSON 403. See web/csrf.py for the tradeoff write-up.
+    from web.csrf import CSRFMiddleware
+    app.add_middleware(CSRFMiddleware)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     # Serve user-uploaded chat attachments so the browser can render
     # thumbnails of the image the user just sent. Bound to 127.0.0.1

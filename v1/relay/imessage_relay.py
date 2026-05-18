@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
@@ -47,6 +48,52 @@ from typing import Any
 
 import applescript
 from dotenv import load_dotenv
+
+
+# ─── AppleScript input validators (security batch 5 C5) ──────────────────────
+#
+# The existing string escape (`replace("\\", "\\\\").replace('"', '\\"')`) is
+# correct for AppleScript double-quoted string literals. These validators are
+# defense-in-depth: they reject obviously-bad inputs before the script is even
+# built, so a future bug in chat.db parsing or an env-var typo fails loudly
+# instead of silently breaking AppleScript.
+
+# Phone (+E.164 / digits) OR email-shape — what TARGET_PHONE_NUMBER and
+# IMESSAGE_USER_HANDLE can legitimately be.
+_PHONE_RE = re.compile(r"^\+?[0-9]{4,20}$")
+_EMAIL_RE = re.compile(r"^[^@\s\"\\]+@[^@\s\"\\]+\.[^@\s\"\\]+$")
+
+# Chat-db identifier — alphanumerics plus the AppleScript chat-id punctuation
+# (`iMessage;+;<id>` form). chat.db itself can have a wide range of values
+# here; we accept the conservative subset that's safe to interpolate into
+# AppleScript without further sanitization.
+_CHAT_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9;:+\-_.]+$")
+
+
+def _is_valid_handle(s: str) -> bool:
+    """A phone (+15551234567) or email-shape handle, or empty.
+
+    Empty returns False — callers should reject the action entirely
+    rather than pass an empty handle into AppleScript.
+    """
+    s = (s or "").strip()
+    if not s:
+        return False
+    return bool(_PHONE_RE.match(s) or _EMAIL_RE.match(s))
+
+
+def _is_valid_email(s: str) -> bool:
+    s = (s or "").strip()
+    return bool(s and _EMAIL_RE.match(s))
+
+
+def _is_valid_chat_identifier(s: str) -> bool:
+    """`chat.db.chat_identifier` (e.g. `chat657054710918744555`) OR the
+    AppleScript service-prefixed form (`iMessage;+;<id>`). Empty fails."""
+    s = (s or "").strip()
+    if not s:
+        return False
+    return bool(_CHAT_IDENTIFIER_RE.match(s))
 
 load_dotenv()
 
@@ -736,6 +783,15 @@ class ChatSender:
         """
 
     def _chat_script(self, chat_identifier: str, text: str) -> str:
+        # Reject obvious garbage before building AppleScript. The bare
+        # chat_identifier comes from chat.db which we don't write to,
+        # but the schema is a moving target across macOS releases —
+        # validate the conservative subset that's safe to interpolate.
+        if not _is_valid_chat_identifier(chat_identifier):
+            raise ValueError(
+                f"refusing to build AppleScript for invalid chat_identifier "
+                f"{chat_identifier!r}; expected alphanumerics + :;+-_."
+            )
         safe = text.replace("\\", "\\\\").replace('"', '\\"')
         # `chat_identifier` from chat.db is bare ("chat65705...");
         # AppleScript expects the service-prefixed form.
@@ -1240,14 +1296,37 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
+        if not _is_valid_handle(user_handle):
+            print(
+                f"error: IMESSAGE_USER_HANDLE={user_handle!r} doesn't look like "
+                f"a phone (+15551234567) or email — refusing to start so we "
+                f"don't build invalid AppleScript at send-time.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         if not agent_apple_id:
             print(
                 "error: IMESSAGE_MODE=dedicated requires IMESSAGE_AGENT_APPLE_ID",
                 file=sys.stderr,
             )
             sys.exit(1)
+        if not _is_valid_email(agent_apple_id):
+            print(
+                f"error: IMESSAGE_AGENT_APPLE_ID={agent_apple_id!r} doesn't "
+                f"look like an email — refusing to start.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     elif not target_handle:
         print("error: TARGET_PHONE_NUMBER not set in .env", file=sys.stderr)
+        sys.exit(1)
+    elif not _is_valid_handle(target_handle):
+        print(
+            f"error: TARGET_PHONE_NUMBER={target_handle!r} doesn't look like "
+            f"a phone (+15551234567) or email — refusing to start so we "
+            f"don't build invalid AppleScript at send-time.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("error: ANTHROPIC_API_KEY not set in .env", file=sys.stderr)

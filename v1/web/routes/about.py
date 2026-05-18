@@ -191,12 +191,28 @@ async def setup(request: Request) -> HTMLResponse:
 # without exposing the rest of the docs tree.
 @router.get("/setup-image/{name}")
 async def setup_image(name: str):
-    """Serve a SETUP.md image. Restricted to `docs/setup/*.png` for safety."""
+    """Serve a SETUP.md image. Restricted to `docs/setup/*.png` for safety.
+
+    Security batch 5 (C3): the suffix + substring checks alone don't
+    prevent a `.png` symlink inside `docs/setup/` from pointing outside
+    the directory (theoretical, but trivial to defend against). Add a
+    canonical-path containment check so the resolved file MUST be a
+    direct child of `_SETUP_IMAGES_DIR`.
+    """
     from fastapi.responses import FileResponse
 
     if "/" in name or ".." in name or not name.endswith(".png"):
         raise HTTPException(400, "bad filename")
-    path = _SETUP_IMAGES_DIR / name
-    if not path.exists():
+    base = _SETUP_IMAGES_DIR.resolve()
+    try:
+        path = (_SETUP_IMAGES_DIR / name).resolve()
+    except (OSError, RuntimeError):
+        raise HTTPException(400, "bad path") from None
+    if path.parent != base:
+        # A symlink escaped the directory, or some other path-traversal
+        # trick. Reject — anything inside docs/setup must literally be
+        # inside docs/setup.
+        raise HTTPException(400, "bad path (escapes docs/setup)")
+    if not path.is_file():
         raise HTTPException(404, f"image not found: {name}")
     return FileResponse(path)

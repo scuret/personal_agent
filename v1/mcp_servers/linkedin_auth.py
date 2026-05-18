@@ -211,13 +211,30 @@ def get_user_urn() -> str:
 
 
 class _CodeCatcher(BaseHTTPRequestHandler):
+    """Catches the LinkedIn OAuth redirect.
+
+    Security batch 5 (C1): validates `state` against `expected_state`
+    (was generated and sent but never checked on callback).
+    """
+
     captured_code: str | None = None
     captured_error: str | None = None
+    expected_state: str | None = None
 
     def do_GET(self):  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         params = urllib.parse.parse_qs(parsed.query)
-        if "code" in params:
+        returned_state = (params.get("state") or [""])[0]
+        if (
+            _CodeCatcher.expected_state
+            and returned_state != _CodeCatcher.expected_state
+        ):
+            _CodeCatcher.captured_error = (
+                "CSRF: OAuth state mismatch "
+                f"(expected {_CodeCatcher.expected_state[:8]}…, got {returned_state[:8]!r})"
+            )
+            body = b"<html><body><h2>auth failed.</h2><p>state mismatch (CSRF check).</p></body></html>"
+        elif "code" in params:
             _CodeCatcher.captured_code = params["code"][0]
             body = b"<html><body><h2>auth ok.</h2><p>you can close this window.</p></body></html>"
         elif "error" in params:
@@ -241,7 +258,12 @@ def run_interactive_auth() -> None:
     cid, _ = _app_creds()
     port = _redirect_port()
     redirect_uri = f"http://127.0.0.1:{port}"
-    state = secrets.token_urlsafe(16)
+    # Prime the catcher to enforce the state we send (was previously
+    # generated and sent, never validated on callback).
+    state = secrets.token_urlsafe(32)
+    _CodeCatcher.expected_state = state
+    _CodeCatcher.captured_code = None
+    _CodeCatcher.captured_error = None
     params = {
         "response_type": "code",
         "client_id": cid,
