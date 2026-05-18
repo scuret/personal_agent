@@ -24,6 +24,7 @@ Wired in from agent_host.build_options.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
@@ -32,7 +33,17 @@ from claude_agent_sdk.types import McpSdkServerConfig
 from tools.install import SUBAGENTS, SubAgent
 from web.routes._env_io import read_env_dict, write_env_values
 
-WEB_UI_BASE = "http://127.0.0.1:8780"
+
+def _web_ui_base() -> str:
+    """Compose the local web UI's origin from the current WEB_PORT env.
+
+    Defaults to 8780 (dev install). The Otto Agents bundle uses 8790
+    so it can coexist with a dev install on the same Mac without
+    binding the same port. Always 127.0.0.1 — never bind to LAN
+    (ROADMAP H3).
+    """
+    port = (os.environ.get("WEB_PORT") or "8780").strip() or "8780"
+    return f"http://127.0.0.1:{port}"
 
 
 # ─── Disabled-set helpers ──────────────────────────────────────────────────
@@ -105,7 +116,7 @@ def setup_link_for(name: str) -> str:
     Loopback-only — safe to surface in chat. Same /settings/connect/<name>
     endpoint the wizard / settings page already use.
     """
-    return f"{WEB_UI_BASE}/settings/connect/{name}"
+    return f"{_web_ui_base()}/settings/connect/{name}"
 
 
 # ─── MCP server factory ────────────────────────────────────────────────────
