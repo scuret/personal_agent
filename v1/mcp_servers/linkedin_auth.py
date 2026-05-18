@@ -80,8 +80,8 @@ def _v1_dir() -> Path:
 
 
 def _token_path() -> Path:
-    raw = os.environ.get("LINKEDIN_TOKEN_PATH", DEFAULT_TOKEN_PATH)
-    return Path(raw) if Path(raw).is_absolute() else (_v1_dir() / raw)
+    from core.paths import oauth_token_path
+    return oauth_token_path("linkedin", env_var="LINKEDIN_TOKEN_PATH")
 
 
 def _redirect_port() -> int:

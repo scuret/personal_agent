@@ -12,8 +12,13 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
+from core.paths import env_path
+
+# Back-compat: V1_DIR + ENV_PATH are imported by other modules. Keep
+# them defined here as resolved at import time. New code should call
+# env_path() / source_dir() / etc. via core.paths directly.
 V1_DIR = Path(__file__).resolve().parent.parent.parent
-ENV_PATH = V1_DIR / ".env"
+ENV_PATH = env_path()
 
 
 def read_env_dict() -> dict[str, str]:

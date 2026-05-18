@@ -26,8 +26,10 @@ router = APIRouter()
 WEB_SOURCE = "web"
 CONVERSATION_GAP_HOURS = 4.0
 
-V1_DIR = Path(__file__).resolve().parent.parent.parent
-UPLOADS_DIR = V1_DIR / "data" / "uploads"
+from core.paths import uploads_dir as _uploads_dir
+
+# Snapshot at import.
+UPLOADS_DIR = _uploads_dir()
 
 # Browser uploads are capped here to keep the SSE URL well under typical
 # query-string limits when the [attachment: ...] markers are encoded

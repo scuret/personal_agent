@@ -77,8 +77,8 @@ def _v1_dir() -> Path:
 
 
 def _token_path() -> Path:
-    raw = os.environ.get("SPOTIFY_TOKEN_PATH", DEFAULT_TOKEN_PATH)
-    return Path(raw) if Path(raw).is_absolute() else (_v1_dir() / raw)
+    from core.paths import oauth_token_path
+    return oauth_token_path("spotify", env_var="SPOTIFY_TOKEN_PATH")
 
 
 def _app_creds() -> tuple[str, str]:

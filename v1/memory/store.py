@@ -33,8 +33,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-# Resolve the DB path relative to v1/ so the store works from any cwd.
-_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "memory.sqlite"
+# Resolve the DB path via core.paths so the GUI app's
+# PERSONAL_AGENT_HOME override takes effect. Defaults to the v1/data/
+# location for the dev workflow.
+from core.paths import db_path as _resolve_db_path
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
@@ -136,7 +138,7 @@ class MemoryStore:
     """Thread-safe SQLite wrapper for the agent's persistent state."""
 
     def __init__(self, db_path: Path | str | None = None) -> None:
-        self.db_path = Path(db_path) if db_path else _DB_PATH
+        self.db_path = Path(db_path) if db_path else _resolve_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         # SQLite connections aren't safe to share across threads by default;
         # we create per-thread connections via threading.local instead.

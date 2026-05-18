@@ -15,13 +15,11 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from pathlib import Path
 
 import pytz
 
+from core.paths import personality_path
 from memory.store import MemoryStore
-
-_PERSONALITY_PATH = Path(__file__).parent / "config" / "personality.md"
 
 # How many facts to inject up front. Plenty for personal-scale data; the
 # agent can call memory_recall_facts for more if needed.
@@ -29,7 +27,7 @@ _FACTS_INJECTION_LIMIT = 50
 
 
 def _load_personality() -> str:
-    return _PERSONALITY_PATH.read_text(encoding="utf-8").strip()
+    return personality_path().read_text(encoding="utf-8").strip()
 
 
 def _build_runtime_context() -> str:
@@ -87,6 +85,6 @@ def build_system_prompt(store: MemoryStore | None = None) -> str:
 if __name__ == "__main__":
     # `python system_prompt.py` prints the assembled prompt for debugging.
     # Includes facts if the DB exists.
-    db_path = Path(__file__).parent / "data" / "memory.sqlite"
-    s = MemoryStore() if db_path.exists() else None
+    from core.paths import db_path as _resolve_db_path
+    s = MemoryStore() if _resolve_db_path().exists() else None
     print(build_system_prompt(s))

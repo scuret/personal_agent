@@ -28,13 +28,23 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-V1_DIR = Path(__file__).resolve().parent.parent
-ENV_PATH = V1_DIR / ".env"
-ENV_EXAMPLE_PATH = V1_DIR / ".env.example"
-DATA_DIR = V1_DIR / "data"
-CONFIG_DIR = V1_DIR / "config"
-CREDENTIALS_PATH = CONFIG_DIR / "credentials.json"
-TRIGGERS_PATH = CONFIG_DIR / "triggers.yaml"
+from core.paths import (
+    config_dir,
+    credentials_path,
+    data_dir,
+    env_example_path,
+    env_path,
+    source_dir,
+    triggers_yaml_path,
+)
+
+V1_DIR = source_dir()
+ENV_PATH = env_path()
+ENV_EXAMPLE_PATH = env_example_path()
+DATA_DIR = data_dir()
+CONFIG_DIR = config_dir()
+CREDENTIALS_PATH = credentials_path()
+TRIGGERS_PATH = triggers_yaml_path()
 TRIGGERS_EXAMPLE_PATH = CONFIG_DIR / "triggers.yaml.example"
 
 

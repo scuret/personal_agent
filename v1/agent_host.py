@@ -358,11 +358,8 @@ def _has_google_oauth() -> bool:
     the first tool call triggers the OAuth flow (which works in dev/CLI
     but not under launchd; install.sh handles the dance up-front).
     """
-    creds_raw = os.environ.get("GOOGLE_OAUTH_CREDENTIALS_PATH", "./config/credentials.json")
-    creds_path = Path(creds_raw)
-    if not creds_path.is_absolute():
-        creds_path = Path(__file__).parent / creds_path
-    return creds_path.exists()
+    from core.paths import credentials_path as _credentials_path
+    return _credentials_path().exists()
 
 
 def _has_dropbox_oauth() -> bool:
@@ -375,11 +372,8 @@ def _has_dropbox_oauth() -> bool:
     """
     if not _has_env("DROPBOX_APP_KEY", "DROPBOX_APP_SECRET"):
         return False
-    token_raw = os.environ.get("DROPBOX_TOKEN_PATH", "./data/dropbox_token.json")
-    token_path = Path(token_raw)
-    if not token_path.is_absolute():
-        token_path = Path(__file__).parent / token_path
-    return token_path.exists()
+    from core.paths import oauth_token_path
+    return oauth_token_path("dropbox", env_var="DROPBOX_TOKEN_PATH").exists()
 
 
 def _has_eightsleep() -> bool:
@@ -409,22 +403,16 @@ def _has_spotify_oauth() -> bool:
     """True iff Spotify app creds AND a cached refresh token are present."""
     if not _has_env("SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"):
         return False
-    token_raw = os.environ.get("SPOTIFY_TOKEN_PATH", "./data/spotify_token.json")
-    token_path = Path(token_raw)
-    if not token_path.is_absolute():
-        token_path = Path(__file__).parent / token_path
-    return token_path.exists()
+    from core.paths import oauth_token_path
+    return oauth_token_path("spotify", env_var="SPOTIFY_TOKEN_PATH").exists()
 
 
 def _has_canva_oauth() -> bool:
     """True iff Canva app creds AND a cached refresh token are present."""
     if not _has_env("CANVA_CLIENT_ID", "CANVA_CLIENT_SECRET"):
         return False
-    token_raw = os.environ.get("CANVA_TOKEN_PATH", "./data/canva_token.json")
-    token_path = Path(token_raw)
-    if not token_path.is_absolute():
-        token_path = Path(__file__).parent / token_path
-    return token_path.exists()
+    from core.paths import oauth_token_path
+    return oauth_token_path("canva", env_var="CANVA_TOKEN_PATH").exists()
 
 
 def _has_linkedin_oauth() -> bool:
@@ -436,11 +424,8 @@ def _has_linkedin_oauth() -> bool:
     """
     if not _has_env("LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET"):
         return False
-    token_raw = os.environ.get("LINKEDIN_TOKEN_PATH", "./data/linkedin_token.json")
-    token_path = Path(token_raw)
-    if not token_path.is_absolute():
-        token_path = Path(__file__).parent / token_path
-    return token_path.exists()
+    from core.paths import oauth_token_path
+    return oauth_token_path("linkedin", env_var="LINKEDIN_TOKEN_PATH").exists()
 
 
 # ─── Safety hooks ───────────────────────────────────────────────────────────

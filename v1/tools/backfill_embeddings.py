@@ -28,7 +28,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "memory.sqlite"
+from core.paths import db_path
+DB_PATH = db_path()
 BATCH_SIZE = 32
 
 

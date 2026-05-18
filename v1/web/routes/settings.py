@@ -25,12 +25,21 @@ from tools.install import SUBAGENTS, SubAgent
 from web import daemon_control
 from web.templating import templates
 
+from core.paths import (
+    credentials_path,
+    data_dir,
+    env_path,
+    launch_agents_template_dir,
+    source_dir,
+)
+
 router = APIRouter(prefix="/settings")
 
-V1_DIR = Path(__file__).resolve().parent.parent.parent
-ENV_PATH = V1_DIR / ".env"
-DATA_DIR = V1_DIR / "data"
-LAUNCH_AGENTS_DIR = V1_DIR / "launch_agents"
+# Snapshot at import — these don't change after the daemon starts.
+V1_DIR = source_dir()
+ENV_PATH = env_path()
+DATA_DIR = data_dir()
+LAUNCH_AGENTS_DIR = launch_agents_template_dir()
 
 # Which auth script (under mcp_servers/) handles each sub-agent's OAuth
 # step. Sub-agents not listed here are configured purely via .env (key
@@ -117,7 +126,7 @@ def _status_for(sa: SubAgent, env: dict[str, str]) -> dict:
         # secret lives under config/credentials.json, not in .env. So
         # "configured" tracks whether credentials.json exists. The token
         # file presence tracks "connected."
-        creds = V1_DIR / "config" / "credentials.json"
+        creds = credentials_path()
         configured_env = creds.exists()
         if not configured_env:
             missing_env = ["config/credentials.json (OAuth client JSON)"]

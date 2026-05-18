@@ -51,14 +51,21 @@ import sys
 from pathlib import Path
 
 # Reuse the sub-agent registry so install + uninstall stay in lockstep.
+from core.paths import (  # noqa: E402
+    config_dir,
+    data_dir,
+    env_path,
+    launch_agents_template_dir,
+    source_dir,
+)
 from tools.install import SUBAGENTS, SubAgent  # noqa: E402
 
-V1_DIR = Path(__file__).resolve().parent.parent
-ENV_PATH = V1_DIR / ".env"
-DATA_DIR = V1_DIR / "data"
-CONFIG_DIR = V1_DIR / "config"
+V1_DIR = source_dir()
+ENV_PATH = env_path()
+DATA_DIR = data_dir()
+CONFIG_DIR = config_dir()
 VENV_DIR = V1_DIR / ".venv"
-LAUNCH_AGENTS_SCRIPT = V1_DIR / "launch_agents" / "uninstall.sh"
+LAUNCH_AGENTS_SCRIPT = launch_agents_template_dir() / "uninstall.sh"
 LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
 LAUNCH_AGENT_LABELS = [
     "com.personal-agent.relay",

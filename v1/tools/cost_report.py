@@ -28,7 +28,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "memory.sqlite"
+from core.paths import db_path
+DB_PATH = db_path()
 
 
 def _open() -> sqlite3.Connection:

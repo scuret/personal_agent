@@ -36,9 +36,10 @@ from typing import Any
 from claude_agent_sdk import create_sdk_mcp_server, tool
 from claude_agent_sdk.types import McpSdkServerConfig
 
+from core.paths import db_path
 from memory.store import MemoryStore
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "memory.sqlite"
+DB_PATH = db_path()
 
 
 def _err(msg: str) -> dict[str, Any]:

@@ -17,12 +17,14 @@ from dotenv import dotenv_values
 from fastapi import APIRouter
 from fastapi.responses import RedirectResponse
 
+from core.paths import env_example_path, env_path, install_progress_path
+
 router = APIRouter()
 
-V1_DIR = Path(__file__).resolve().parent.parent.parent
-ENV_PATH = V1_DIR / ".env"
-ENV_EXAMPLE_PATH = V1_DIR / ".env.example"
-PROGRESS_PATH = V1_DIR / "data" / ".install_progress.json"
+# Snapshot at import.
+ENV_PATH = env_path()
+ENV_EXAMPLE_PATH = env_example_path()
+PROGRESS_PATH = install_progress_path()
 
 
 def _required_key_present() -> bool:

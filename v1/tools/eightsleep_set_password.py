@@ -34,8 +34,10 @@ from pathlib import Path
 
 from dotenv import dotenv_values
 
-V1_DIR = Path(__file__).resolve().parent.parent
-ENV_PATH = V1_DIR / ".env"
+from core.paths import env_path, source_dir
+
+V1_DIR = source_dir()
+ENV_PATH = env_path()
 
 # Match the constants in mcp_servers/eightsleep_auth.py exactly.
 KEYRING_SERVICE = "personal_agent_eight_sleep"

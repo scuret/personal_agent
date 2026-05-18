@@ -22,15 +22,24 @@ import os
 import stat
 from pathlib import Path
 
-V1_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = V1_DIR / "data"
-CONFIG_DIR = V1_DIR / "config"
+from core.paths import (
+    config_dir,
+    credentials_path,
+    data_dir,
+    env_path,
+    source_dir,
+    triggers_yaml_path,
+)
+
+V1_DIR = source_dir()
+DATA_DIR = data_dir()
+CONFIG_DIR = config_dir()
 
 # Single sensitive files we always want owner-only.
 SENSITIVE_FILES: list[Path] = [
-    V1_DIR / ".env",
-    CONFIG_DIR / "credentials.json",
-    CONFIG_DIR / "triggers.yaml",
+    env_path(),
+    credentials_path(),
+    triggers_yaml_path(),
 ]
 
 # Glob patterns under data/ that we want owner-only.

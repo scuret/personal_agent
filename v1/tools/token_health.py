@@ -192,10 +192,8 @@ def check_dropbox() -> dict[str, str]:
 
 def check_google_oauth() -> dict[str, str]:
     """Verify the cached Gmail + Calendar OAuth token still works."""
-    raw = os.environ.get("GOOGLE_OAUTH_TOKEN_PATH", "./data/google_token.pickle")
-    token_path = Path(raw)
-    if not token_path.is_absolute():
-        token_path = Path(__file__).resolve().parent.parent / token_path
+    from core.paths import google_token_path
+    token_path = google_token_path()
     if not token_path.exists():
         return _r("skip", f"no cached token at {token_path}")
     try:

@@ -36,18 +36,29 @@ from typing import Any
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from core.paths import (
+    config_dir,
+    credentials_path,
+    env_example_path,
+    env_path,
+    google_token_path,
+    install_progress_path,
+    source_dir,
+)
 from tools.install import SUBAGENTS
-from web.routes._env_io import ENV_PATH, read_env_dict, write_env_values
+from web.routes._env_io import read_env_dict, write_env_values
 from web.routes.settings import _AUTH_SCRIPTS, _TOKEN_FILES
 from web.routes.settings_transports import _TRANSPORT_BY_NAME, TRANSPORTS
 from web.templating import templates
 
 router = APIRouter(prefix="/wizard")
 
-V1_DIR = Path(__file__).resolve().parent.parent.parent
-PROGRESS_PATH = V1_DIR / "data" / ".install_progress.json"
-CONFIG_DIR = V1_DIR / "config"
-CREDENTIALS_PATH = CONFIG_DIR / "credentials.json"
+# Snapshot at import — these don't change after the daemon starts.
+V1_DIR = source_dir()
+ENV_PATH = env_path()
+PROGRESS_PATH = install_progress_path()
+CONFIG_DIR = config_dir()
+CREDENTIALS_PATH = credentials_path()
 
 
 # ─── Progress state ────────────────────────────────────────────────────────
@@ -208,7 +219,7 @@ STEPS: list[WizardStep] = [
         blurb_what="Upload the OAuth client JSON from Google Cloud Console, then click Run OAuth to grant access in your browser.",
         blurb_why="Gmail, Calendar, Drive, Docs, and Sheets all share one Google OAuth flow. Only needed if you enabled at least one of those.",
         setup_anchor="google-cloud-project",
-        is_complete=lambda env, p: (V1_DIR / "data" / "google_token.pickle").exists(),
+        is_complete=lambda env, p: google_token_path().exists(),
         is_relevant=lambda env, p: _any_google_subagent_enabled(p),
         mandatory=False,
     ),
@@ -425,7 +436,7 @@ async def step(request: Request, step_name: str):
         ctx["tokens_present"] = all(p.exists() for p in token_files) if token_files else False
     elif step_name == "google_oauth":
         ctx["credentials_present"] = CREDENTIALS_PATH.exists()
-        ctx["token_present"] = (V1_DIR / "data" / "google_token.pickle").exists()
+        ctx["token_present"] = google_token_path().exists()
     elif step_name == "done":
         progress = _write_progress({"completed_at": ctx["progress"].get("completed_at") or _now()})
         ctx["progress"] = progress
@@ -450,7 +461,7 @@ async def step_save(request: Request, step_name: str):
         if not ENV_PATH.exists():
             # First-run bootstrap: copy .env.example → .env if user
             # arrived without one.
-            example = V1_DIR / ".env.example"
+            example = env_example_path()
             if example.exists():
                 ENV_PATH.write_text(example.read_text())
                 os.chmod(ENV_PATH, 0o600)

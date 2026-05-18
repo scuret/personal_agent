@@ -20,8 +20,10 @@ import subprocess
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-V1_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = V1_DIR / "data"
+from core.paths import data_dir, source_dir
+
+V1_DIR = source_dir()
+DATA_DIR = data_dir()
 
 # Display name → launchd label + log basename. Display name is what
 # templates render; label is what launchctl sees; log_basename is the

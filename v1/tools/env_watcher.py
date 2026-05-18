@@ -22,9 +22,11 @@ import os
 import sys
 from pathlib import Path
 
-# `.env` is always at the v1/ root.
-_V1_DIR = Path(__file__).resolve().parent.parent
-_DEFAULT_ENV_PATH = _V1_DIR / ".env"
+from core.paths import env_path
+
+# `.env` resolution honors PERSONAL_AGENT_HOME so the GUI app's
+# Application Support .env is watched (not the source-side one).
+_DEFAULT_ENV_PATH = env_path()
 
 
 async def watch_env_and_exit_on_change(

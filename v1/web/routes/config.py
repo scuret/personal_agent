@@ -17,13 +17,20 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from web.templating import templates
 
+from core.paths import (
+    env_example_path,
+    env_path,
+    personality_path,
+    triggers_yaml_path,
+)
+
 router = APIRouter(prefix="/config")
 
-V1_DIR = Path(__file__).resolve().parent.parent.parent
-ENV_PATH = V1_DIR / ".env"
-ENV_EXAMPLE_PATH = V1_DIR / ".env.example"
-TRIGGERS_PATH = V1_DIR / "config" / "triggers.yaml"
-PERSONALITY_PATH = V1_DIR / "config" / "personality.md"
+# Snapshot at import.
+ENV_PATH = env_path()
+ENV_EXAMPLE_PATH = env_example_path()
+TRIGGERS_PATH = triggers_yaml_path()
+PERSONALITY_PATH = personality_path()
 
 
 @router.get("", response_class=HTMLResponse)

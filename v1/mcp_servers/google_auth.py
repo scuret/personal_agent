@@ -65,19 +65,17 @@ SCOPES: list[str] = [
 ]
 
 
-def _v1_dir() -> Path:
-    """Return the v1/ directory regardless of where this is imported from."""
-    return Path(__file__).resolve().parent.parent
+from core.paths import credentials_path, google_token_path
 
 
 def _credentials_path() -> Path:
-    raw = os.environ.get("GOOGLE_OAUTH_CREDENTIALS_PATH", "./config/credentials.json")
-    return Path(raw) if Path(raw).is_absolute() else (_v1_dir() / raw)
+    # Wrapper preserved so call sites don't break; resolution now lives
+    # in core.paths (handles PERSONAL_AGENT_HOME + the per-var override).
+    return credentials_path()
 
 
 def _token_path() -> Path:
-    raw = os.environ.get("GOOGLE_OAUTH_TOKEN_PATH", "./data/google_token.pickle")
-    return Path(raw) if Path(raw).is_absolute() else (_v1_dir() / raw)
+    return google_token_path()
 
 
 def _load_cached_credentials() -> Credentials | None:

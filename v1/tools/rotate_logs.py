@@ -24,7 +24,8 @@ import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+from core.paths import data_dir
+DATA_DIR = data_dir()
 LOG_NAMES: list[str] = [
     "relay.log",
     "relay.err.log",

@@ -64,7 +64,8 @@ from agent_host import build_options, process_turn  # noqa: E402
 from memory.store import MemoryStore  # noqa: E402
 from relay.sender import make_sender  # noqa: E402
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "triggers.yaml"
+from core.paths import triggers_yaml_path
+CONFIG_PATH = triggers_yaml_path()
 CONVERSATION_SOURCE = "scheduler"
 
 # Wake every 30s and check the wallclock. Short enough that we catch

@@ -31,10 +31,13 @@ from sse_starlette.sse import EventSourceResponse
 
 from web.templating import templates
 
+from core.paths import env_path, source_dir
+
 router = APIRouter(prefix="/settings/transports")
 
-V1_DIR = Path(__file__).resolve().parent.parent.parent
-ENV_PATH = V1_DIR / ".env"
+# Snapshot at import.
+V1_DIR = source_dir()
+ENV_PATH = env_path()
 
 
 # ─── Transport metadata ────────────────────────────────────────────────────

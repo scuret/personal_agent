@@ -60,8 +60,8 @@ def _v1_dir() -> Path:
 
 
 def _token_path() -> Path:
-    raw = os.environ.get("EIGHT_TOKEN_PATH", DEFAULT_TOKEN_PATH)
-    return Path(raw) if Path(raw).is_absolute() else (_v1_dir() / raw)
+    from core.paths import oauth_token_path
+    return oauth_token_path("eight", env_var="EIGHT_TOKEN_PATH")
 
 
 def _password_from_keyring(email: str) -> str | None:
